@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: example-app
+  namespace: default
+  annotations:
+    watch-cluster.io/enabled: "true"
+    watch-cluster.io/cron: "0 */10 * * * ?"  # Check every 10 minutes
+    watch-cluster.io/strategy: "version"      # or "latest"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: example-app
+  template:
+    metadata:
+      labels:
+        app: example-app
+    spec:
+      containers:
+      - name: app
+        image: nginx:1.24.0
+        ports:
+        - containerPort: 80
