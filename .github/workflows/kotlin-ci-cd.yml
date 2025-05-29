@@ -1,0 +1,163 @@
+# This workflow will build a Kotlin project with Gradle, run tests, build Docker image and push to registry
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-java-with-gradle
+
+name: Kotlin CI/CD
+
+on:
+  push:
+    branches: [ master ]
+    paths-ignore:
+      - '**/README.md'
+      - '.github/workflows/*.md'
+      - 'k8s/**'
+  pull_request:
+    branches: [ master ]
+    paths-ignore:
+      - '**/README.md'
+      - '.github/workflows/*.md'
+      - 'k8s/**'
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: hub.sixtyfive.me
+  NAME: watch-cluster
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        java-version: ["17"]
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up JDK ${{ matrix.java-version }}
+      uses: actions/setup-java@v3
+      with:
+        java-version: ${{ matrix.java-version }}
+        distribution: 'temurin'
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v3
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+    - name: Run tests with Gradle
+      run: ./gradlew test
+    - name: Build with Gradle
+      run: ./gradlew build
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results
+        path: build/test-results/test/
+  
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.get-version.outputs.new_version }}
+    steps:
+      - uses: actions/checkout@v3
+      -
+        name: Get Latest Version from Registry
+        id: get-version
+        run: |
+          # Get tags from Docker registry
+          # Using curl to get tags from private registry
+          TAGS=$(curl -s -u "${{ secrets.REGISTRY_USER }}:${{ secrets.REGISTRY_PASSWORD }}" \
+            "https://${{ env.REGISTRY }}/v2/${{ env.NAME }}/tags/list" | jq -r '.tags[]' | grep '^v' | sort -V)
+          
+          if [ -z "$TAGS" ]; then
+            # No existing version tags, start with v0.1.0
+            latest_tag="none"
+            new_version="v0.1.0"
+          else
+            # Get the latest version tag
+            latest_tag=$(echo "$TAGS" | tail -n 1)
+            
+            # Extract version components
+            version_without_v=${latest_tag#v}
+            IFS='.' read -ra VERSION_PARTS <<< "$version_without_v"
+            
+            # Increment minor version
+            major=${VERSION_PARTS[0]}
+            minor=${VERSION_PARTS[1]}
+            patch=${VERSION_PARTS[2]}
+            
+            minor=$((minor + 1))
+            new_version="v${major}.${minor}.${patch}"
+          fi
+          
+          echo "Latest tag: $latest_tag"
+          echo "New version: $new_version"
+          echo "new_version=$new_version" >> $GITHUB_OUTPUT
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      -
+        name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      -
+        name: short-sha
+        uses: benjlevesque/short-sha@v2.2
+        id: short-sha
+      -
+        name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.NAME }}:${{ steps.short-sha.outputs.sha }}
+            ${{ env.REGISTRY }}/${{ env.NAME }}:${{ steps.get-version.outputs.new_version }}
+  
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      -
+        name: short-sha
+        uses: benjlevesque/short-sha@v2.2
+        id: short-sha
+      -
+        name: Change k8s image tag and deploy
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            # Set KUBECONFIG environment variable
+            export KUBECONFIG=$HOME/.kube/config
+            
+            # Update the deployment with new image tag
+            /usr/local/bin/kubectl set image deployment/watch-cluster-deployment watch-cluster=${{ env.REGISTRY }}/${{ env.NAME }}:${{ needs.build.outputs.new_version }} -n watch-cluster
+            
+            # Wait for rollout to complete
+            /usr/local/bin/kubectl rollout status deployment/watch-cluster-deployment -n watch-cluster --timeout=300s
+  
+  notification:
+    runs-on: ubuntu-latest
+    needs: [ build, deploy ]
+    steps:
+      -
+        name: notifying
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            curl --data "[$(date +\%F)] Deploying ${{ env.REGISTRY }}/${{ env.NAME }}:${{ needs.build.outputs.new_version }} completed!" https://ntfy.sixtyfive.me/workflow
