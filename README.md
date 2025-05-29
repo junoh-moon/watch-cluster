@@ -8,7 +8,7 @@ Kubernetes용 자동 컨테이너 이미지 업데이트 도구입니다. Docker
 - 시맨틱 버저닝 기반 자동 업데이트
 - Latest 태그 이미지의 변경 감지 및 업데이트
 - Cron 표현식을 사용한 유연한 스케줄링
-- DaemonSet으로 배포되어 모든 노드에서 실행
+- Deployment로 배포되어 클러스터에서 실행
 - 롤링 업데이트 완료까지 대기
 
 ## 시작하기
@@ -18,6 +18,15 @@ Kubernetes용 자동 컨테이너 이미지 업데이트 도구입니다. Docker
 - Kubernetes 클러스터 (v1.20+)
 - kubectl 설치 및 클러스터 접근 권한
 - Docker (이미지 빌드용)
+
+### Kubernetes 매니페스트 파일
+
+`k8s/` 디렉토리에는 다음 파일들이 포함되어 있습니다:
+
+- `namespace.yaml`: watch-cluster 네임스페이스 생성
+- `rbac.yaml`: ServiceAccount, ClusterRole, ClusterRoleBinding 설정
+- `deployment.yaml`: watch-cluster 애플리케이션 배포 설정
+- `example-deployment.yaml`: 테스트용 예시 애플리케이션
 
 ### 설치
 
@@ -34,18 +43,32 @@ docker tag watch-cluster:latest your-registry/watch-cluster:latest
 docker push your-registry/watch-cluster:latest
 
 # 4. Kubernetes에 배포
+kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/rbac.yaml
-kubectl apply -f k8s/daemonset.yaml
+kubectl apply -f k8s/deployment.yaml
 ```
 
 ### 설치 확인
 
 ```bash
-# DaemonSet 상태 확인
-kubectl get daemonset -n kube-system watch-cluster
+# Deployment 상태 확인
+kubectl get deployment -n watch-cluster watch-cluster
 
 # 로그 확인
-kubectl logs -n kube-system -l app=watch-cluster
+kubectl logs -n watch-cluster -l app=watch-cluster
+```
+
+### 예시 애플리케이션 배포
+
+watch-cluster의 동작을 테스트하려면 예시 애플리케이션을 배포할 수 있습니다:
+
+```bash
+# 예시 애플리케이션 배포
+kubectl apply -f k8s/example-deployment.yaml
+
+# 예시 애플리케이션 상태 확인
+kubectl get deployment example-app
+kubectl logs -n watch-cluster -l app=watch-cluster
 ```
 
 ## 사용 방법
@@ -130,7 +153,7 @@ annotations:
 
 ### 특정 네임스페이스만 모니터링
 
-DaemonSet 환경변수로 네임스페이스를 제한할 수 있습니다:
+Deployment 환경변수로 네임스페이스를 제한할 수 있습니다:
 
 ```yaml
 env:
@@ -151,7 +174,7 @@ watch-cluster.io/last-update-image: "myapp:1.0.1"
 
 ```bash
 # 실시간 로그 확인
-kubectl logs -n kube-system -l app=watch-cluster -f
+kubectl logs -n watch-cluster -l app=watch-cluster -f
 
 # 특정 deployment의 annotation 확인
 kubectl get deployment my-app -o jsonpath='{.metadata.annotations}'
@@ -194,10 +217,10 @@ annotations:
 
 ## 문제 해결
 
-### DaemonSet이 시작되지 않는 경우
+### Deployment가 시작되지 않는 경우
 ```bash
-kubectl describe daemonset -n kube-system watch-cluster
-kubectl logs -n kube-system -l app=watch-cluster
+kubectl describe deployment -n watch-cluster watch-cluster
+kubectl logs -n watch-cluster -l app=watch-cluster
 ```
 
 ### 업데이트가 수행되지 않는 경우
