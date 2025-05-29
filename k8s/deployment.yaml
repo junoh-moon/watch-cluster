@@ -8,7 +8,7 @@ metadata:
   annotations:
     watch-cluster.io/enabled: "true"
     watch-cluster.io/cron: "0 * * * * ?"  # Every minute
-    watch-cluster.io/strategy: "latest"
+    watch-cluster.io/strategy: "version"
 spec:
   replicas: 1
   strategy:
@@ -27,7 +27,7 @@ spec:
       serviceAccountName: watch-cluster
       containers:
       - name: watch-cluster
-        image: hub.sixtyfive.me/watch-cluster:latest
+        image: hub.sixtyfive.me/watch-cluster:v0.1.0
         imagePullPolicy: Always
         resources:
           requests:
