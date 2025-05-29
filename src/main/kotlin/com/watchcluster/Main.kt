@@ -30,7 +30,7 @@ fun main() = runBlocking {
         logger.info { "  - Image Rollout Started: ${webhookConfig.enableImageRolloutStarted}" }
         logger.info { "  - Image Rollout Completed: ${webhookConfig.enableImageRolloutCompleted}" }
         logger.info { "  - Image Rollout Failed: ${webhookConfig.enableImageRolloutFailed}" }
-        logger.info { "Webhook Headers: ${webhookConfig.headers.keys.joinToString(", ") { key -> "$key=***" }}" }
+        logger.info { "Webhook Headers: ${if (webhookConfig.headers.isEmpty()) "None" else webhookConfig.headers.keys.joinToString(", ") { key -> "$key=***" }}" }
         
         val kubernetesClient = KubernetesClientBuilder().build()
         logger.info { "Connected to Kubernetes cluster: ${kubernetesClient.configuration.masterUrl}" }

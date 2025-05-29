@@ -36,10 +36,15 @@ data class WebhookConfig(
     companion object {
         fun fromEnvironment(): WebhookConfig {
             val headers = System.getenv("WEBHOOK_HEADERS")?.let { headersStr ->
-                headersStr.split(",").associate { header ->
-                    val (key, value) = header.split("=", limit = 2)
-                    key.trim() to value.trim()
-                }
+                headersStr.split(",")
+                    .filter { it.isNotBlank() }
+                    .mapNotNull { header ->
+                        val parts = header.split("=", limit = 2)
+                        if (parts.size == 2) {
+                            parts[0].trim() to parts[1].trim()
+                        } else null
+                    }
+                    .toMap()
             } ?: emptyMap()
             
             return WebhookConfig(
@@ -49,8 +54,8 @@ data class WebhookConfig(
                 enableImageRolloutCompleted = System.getenv("WEBHOOK_ENABLE_IMAGE_ROLLOUT_COMPLETED")?.toBoolean() ?: false,
                 enableImageRolloutFailed = System.getenv("WEBHOOK_ENABLE_IMAGE_ROLLOUT_FAILED")?.toBoolean() ?: false,
                 headers = headers,
-                timeout = System.getenv("WEBHOOK_TIMEOUT")?.toLongOrNull() ?: 10000L,
-                retryCount = System.getenv("WEBHOOK_RETRY_COUNT")?.toIntOrNull() ?: 3
+                timeout = System.getenv("WEBHOOK_TIMEOUT")?.toLongOrNull()?.coerceAtLeast(0L) ?: 10000L,
+                retryCount = System.getenv("WEBHOOK_RETRY_COUNT")?.toIntOrNull()?.coerceAtLeast(0) ?: 3
             )
         }
     }
