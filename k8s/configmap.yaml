@@ -8,10 +8,10 @@ data:
   WEBHOOK_URL: "https://ntfy.sixtyfive.me/watchtower"
   
   # Webhook event enablement flags (true/false)
-  WEBHOOK_ENABLE_DEPLOYMENT_DETECTED: "false"
+  WEBHOOK_ENABLE_DEPLOYMENT_DETECTED: "true"
   WEBHOOK_ENABLE_IMAGE_ROLLOUT_STARTED: "false"
-  WEBHOOK_ENABLE_IMAGE_ROLLOUT_COMPLETED: "false"
-  WEBHOOK_ENABLE_IMAGE_ROLLOUT_FAILED: "false"
+  WEBHOOK_ENABLE_IMAGE_ROLLOUT_COMPLETED: "true"
+  WEBHOOK_ENABLE_IMAGE_ROLLOUT_FAILED: "true"
   
   # Optional webhook headers (format: "key1=value1,key2=value2")
   WEBHOOK_HEADERS: ""
