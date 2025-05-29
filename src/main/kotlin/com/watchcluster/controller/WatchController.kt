@@ -1,10 +1,9 @@
 package com.watchcluster.controller
 
-import com.watchcluster.model.Annotations
-import com.watchcluster.model.UpdateStrategy
-import com.watchcluster.model.WatchedDeployment
+import com.watchcluster.model.*
 import com.watchcluster.service.DeploymentUpdater
 import com.watchcluster.service.ImageChecker
+import com.watchcluster.service.WebhookService
 import com.watchcluster.util.CronScheduler
 import io.fabric8.kubernetes.api.model.apps.Deployment
 import io.fabric8.kubernetes.client.KubernetesClient
@@ -18,8 +17,10 @@ private val logger = KotlinLogging.logger {}
 class WatchController(
     private val kubernetesClient: KubernetesClient
 ) {
+    private val webhookConfig = WebhookConfig.fromEnvironment()
+    private val webhookService = WebhookService(webhookConfig)
     private val imageChecker = ImageChecker()
-    private val deploymentUpdater = DeploymentUpdater(kubernetesClient)
+    private val deploymentUpdater = DeploymentUpdater(kubernetesClient, webhookService)
     private val cronScheduler = CronScheduler()
     private val watchedDeployments = ConcurrentHashMap<String, WatchedDeployment>()
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -79,6 +80,18 @@ class WatchController(
             scope.launch {
                 checkAndUpdateDeployment(watchedDeployment)
             }
+        }
+        
+        scope.launch {
+            webhookService.sendWebhook(WebhookEvent(
+                eventType = WebhookEventType.DEPLOYMENT_DETECTED,
+                timestamp = java.time.Instant.now().toString(),
+                deployment = DeploymentInfo(namespace, name, currentImage),
+                details = mapOf(
+                    "cronExpression" to cronExpression,
+                    "updateStrategy" to strategy.toString()
+                )
+            ))
         }
         
         logger.info { "Watching deployment: $key with cron: $cronExpression and strategy: $strategy" }

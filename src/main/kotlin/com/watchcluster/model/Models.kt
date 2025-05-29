@@ -23,6 +23,59 @@ data class ImageUpdateResult(
     val reason: String? = null
 )
 
+data class WebhookConfig(
+    val url: String?,
+    val enableDeploymentDetected: Boolean = false,
+    val enableImageRolloutStarted: Boolean = false,
+    val enableImageRolloutCompleted: Boolean = false,
+    val enableImageRolloutFailed: Boolean = false,
+    val headers: Map<String, String> = emptyMap(),
+    val timeout: Long = 10000L,
+    val retryCount: Int = 3
+) {
+    companion object {
+        fun fromEnvironment(): WebhookConfig {
+            val headers = System.getenv("WEBHOOK_HEADERS")?.let { headersStr ->
+                headersStr.split(",").associate { header ->
+                    val (key, value) = header.split("=", limit = 2)
+                    key.trim() to value.trim()
+                }
+            } ?: emptyMap()
+            
+            return WebhookConfig(
+                url = System.getenv("WEBHOOK_URL"),
+                enableDeploymentDetected = System.getenv("WEBHOOK_ENABLE_DEPLOYMENT_DETECTED")?.toBoolean() ?: false,
+                enableImageRolloutStarted = System.getenv("WEBHOOK_ENABLE_IMAGE_ROLLOUT_STARTED")?.toBoolean() ?: false,
+                enableImageRolloutCompleted = System.getenv("WEBHOOK_ENABLE_IMAGE_ROLLOUT_COMPLETED")?.toBoolean() ?: false,
+                enableImageRolloutFailed = System.getenv("WEBHOOK_ENABLE_IMAGE_ROLLOUT_FAILED")?.toBoolean() ?: false,
+                headers = headers,
+                timeout = System.getenv("WEBHOOK_TIMEOUT")?.toLongOrNull() ?: 10000L,
+                retryCount = System.getenv("WEBHOOK_RETRY_COUNT")?.toIntOrNull() ?: 3
+            )
+        }
+    }
+}
+
+data class WebhookEvent(
+    val eventType: WebhookEventType,
+    val timestamp: String,
+    val deployment: DeploymentInfo,
+    val details: Map<String, Any> = emptyMap()
+)
+
+data class DeploymentInfo(
+    val namespace: String,
+    val name: String,
+    val image: String
+)
+
+enum class WebhookEventType {
+    DEPLOYMENT_DETECTED,
+    IMAGE_ROLLOUT_STARTED,
+    IMAGE_ROLLOUT_COMPLETED,
+    IMAGE_ROLLOUT_FAILED
+}
+
 object Annotations {
     const val ENABLED = "watch-cluster.io/enabled"
     const val CRON = "watch-cluster.io/cron"

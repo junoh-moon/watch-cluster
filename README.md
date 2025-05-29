@@ -10,6 +10,7 @@ Kubernetes용 자동 컨테이너 이미지 업데이트 도구입니다. Docker
 - Cron 표현식을 사용한 유연한 스케줄링
 - Deployment로 배포되어 클러스터에서 실행
 - 롤링 업데이트 완료까지 대기
+- 웹훅을 통한 이벤트 알림 (deployment 감지, 이미지 롤아웃 상태)
 
 ## 시작하기
 
@@ -25,6 +26,7 @@ Kubernetes용 자동 컨테이너 이미지 업데이트 도구입니다. Docker
 
 - `namespace.yaml`: watch-cluster 네임스페이스 생성
 - `rbac.yaml`: ServiceAccount, ClusterRole, ClusterRoleBinding 설정
+- `configmap.yaml`: 웹훅 설정을 위한 ConfigMap
 - `deployment.yaml`: watch-cluster 애플리케이션 배포 설정
 - `example-deployment.yaml`: 테스트용 예시 애플리케이션
 
@@ -45,6 +47,7 @@ docker push your-registry/watch-cluster:latest
 # 4. Kubernetes에 배포
 kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/rbac.yaml
+kubectl apply -f k8s/configmap.yaml
 kubectl apply -f k8s/deployment.yaml
 ```
 
@@ -170,6 +173,53 @@ watch-cluster.io/last-update: "1704067200000"
 watch-cluster.io/last-update-image: "myapp:1.0.1"
 ```
 
+### 웹훅 설정
+
+watch-cluster는 다음 이벤트에 대해 웹훅을 전송할 수 있습니다:
+
+#### 웹훅 환경변수
+
+ConfigMap을 수정하여 웹훅을 설정할 수 있습니다:
+
+```bash
+kubectl edit configmap watch-cluster-config -n watch-cluster
+```
+
+| 환경변수 | 설명 | 필수 | 기본값 |
+|----------|------|------|--------|
+| `WEBHOOK_URL` | 웹훅 요청을 보낼 URL | 아니오 | - |
+| `WEBHOOK_ENABLE_DEPLOYMENT_DETECTED` | deployment 감지 이벤트 웹훅 활성화 여부 | 아니오 | false |
+| `WEBHOOK_ENABLE_IMAGE_ROLLOUT_STARTED` | 이미지 롤아웃 시작 이벤트 웹훅 활성화 여부 | 아니오 | false |
+| `WEBHOOK_ENABLE_IMAGE_ROLLOUT_COMPLETED` | 이미지 롤아웃 완료 이벤트 웹훅 활성화 여부 | 아니오 | false |
+| `WEBHOOK_ENABLE_IMAGE_ROLLOUT_FAILED` | 이미지 롤아웃 실패 이벤트 웹훅 활성화 여부 | 아니오 | false |
+| `WEBHOOK_HEADERS` | 웹훅 요청에 포함할 헤더 (`key1=value1,key2=value2` 형식) | 아니오 | - |
+| `WEBHOOK_TIMEOUT` | 웹훅 요청 타임아웃 (밀리초) | 아니오 | 10000 |
+| `WEBHOOK_RETRY_COUNT` | 웹훅 요청 재시도 횟수 | 아니오 | 3 |
+
+#### 웹훅 이벤트 타입
+
+- `DEPLOYMENT_DETECTED`: 새로운 deployment가 감지되거나 기존 deployment가 업데이트될 때
+- `IMAGE_ROLLOUT_STARTED`: 이미지 롤아웃이 시작될 때
+- `IMAGE_ROLLOUT_COMPLETED`: 이미지 롤아웃이 성공적으로 완료될 때
+- `IMAGE_ROLLOUT_FAILED`: 이미지 롤아웃이 실패할 때
+
+#### 웹훅 페이로드 예시
+
+```json
+{
+  "eventType": "IMAGE_ROLLOUT_COMPLETED",
+  "timestamp": "2024-01-01T12:00:00Z",
+  "deployment": {
+    "namespace": "default",
+    "name": "my-app",
+    "image": "myapp:1.0.1"
+  },
+  "details": {
+    "rolloutDuration": "45000ms"
+  }
+}
+```
+
 ### 모니터링 및 디버깅
 
 ```bash
@@ -178,6 +228,9 @@ kubectl logs -n watch-cluster -l app=watch-cluster -f
 
 # 특정 deployment의 annotation 확인
 kubectl get deployment my-app -o jsonpath='{.metadata.annotations}'
+
+# ConfigMap 확인
+kubectl get configmap watch-cluster-config -n watch-cluster -o yaml
 
 # 업데이트 이벤트 확인
 kubectl get events --field-selector reason=ImageUpdated

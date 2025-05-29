@@ -5,8 +5,17 @@ metadata:
   namespace: watch-cluster
   labels:
     app: watch-cluster
+  annotations:
+    watch-cluster.io/enabled: "true"
+    watch-cluster.io/cron: "0 * * * * ?"  # Every minute
+    watch-cluster.io/strategy: "latest"
 spec:
   replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: watch-cluster
@@ -36,5 +45,45 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
+        - name: WEBHOOK_URL
+          valueFrom:
+            configMapKeyRef:
+              name: watch-cluster-config
+              key: WEBHOOK_URL
+        - name: WEBHOOK_ENABLE_DEPLOYMENT_DETECTED
+          valueFrom:
+            configMapKeyRef:
+              name: watch-cluster-config
+              key: WEBHOOK_ENABLE_DEPLOYMENT_DETECTED
+        - name: WEBHOOK_ENABLE_IMAGE_ROLLOUT_STARTED
+          valueFrom:
+            configMapKeyRef:
+              name: watch-cluster-config
+              key: WEBHOOK_ENABLE_IMAGE_ROLLOUT_STARTED
+        - name: WEBHOOK_ENABLE_IMAGE_ROLLOUT_COMPLETED
+          valueFrom:
+            configMapKeyRef:
+              name: watch-cluster-config
+              key: WEBHOOK_ENABLE_IMAGE_ROLLOUT_COMPLETED
+        - name: WEBHOOK_ENABLE_IMAGE_ROLLOUT_FAILED
+          valueFrom:
+            configMapKeyRef:
+              name: watch-cluster-config
+              key: WEBHOOK_ENABLE_IMAGE_ROLLOUT_FAILED
+        - name: WEBHOOK_HEADERS
+          valueFrom:
+            configMapKeyRef:
+              name: watch-cluster-config
+              key: WEBHOOK_HEADERS
+        - name: WEBHOOK_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: watch-cluster-config
+              key: WEBHOOK_TIMEOUT
+        - name: WEBHOOK_RETRY_COUNT
+          valueFrom:
+            configMapKeyRef:
+              name: watch-cluster-config
+              key: WEBHOOK_RETRY_COUNT
       imagePullSecrets:
         - name: regcred

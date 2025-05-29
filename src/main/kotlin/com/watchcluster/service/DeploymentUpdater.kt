@@ -1,18 +1,33 @@
 package com.watchcluster.service
 
+import com.watchcluster.model.*
 import io.fabric8.kubernetes.api.model.apps.Deployment
 import io.fabric8.kubernetes.client.KubernetesClient
 import io.fabric8.kubernetes.client.dsl.RollableScalableResource
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import mu.KotlinLogging
 
 private val logger = KotlinLogging.logger {}
 
 class DeploymentUpdater(
-    private val kubernetesClient: KubernetesClient
+    private val kubernetesClient: KubernetesClient,
+    private val webhookService: WebhookService
 ) {
+    private val scope = CoroutineScope(Dispatchers.Default)
     suspend fun updateDeployment(namespace: String, name: String, newImage: String) {
         try {
             logger.info { "Updating deployment $namespace/$name with new image: $newImage" }
+            
+            scope.launch {
+                webhookService.sendWebhook(WebhookEvent(
+                    eventType = WebhookEventType.IMAGE_ROLLOUT_STARTED,
+                    timestamp = java.time.Instant.now().toString(),
+                    deployment = DeploymentInfo(namespace, name, newImage),
+                    details = mapOf("previousImage" to getCurrentImage(namespace, name))
+                ))
+            }
             
             val deploymentResource = kubernetesClient.apps()
                 .deployments()
@@ -35,10 +50,20 @@ class DeploymentUpdater(
             
             addUpdateAnnotation(deploymentResource, newImage)
             
-            waitForRollout(deploymentResource)
+            waitForRollout(deploymentResource, namespace, name, newImage)
             
         } catch (e: Exception) {
             logger.error(e) { "Failed to update deployment $namespace/$name" }
+            
+            scope.launch {
+                webhookService.sendWebhook(WebhookEvent(
+                    eventType = WebhookEventType.IMAGE_ROLLOUT_FAILED,
+                    timestamp = java.time.Instant.now().toString(),
+                    deployment = DeploymentInfo(namespace, name, newImage),
+                    details = mapOf("error" to (e.message ?: "Unknown error"))
+                ))
+            }
+            
             throw e
         }
     }
@@ -56,7 +81,25 @@ class DeploymentUpdater(
         }
     }
     
-    private fun waitForRollout(deploymentResource: RollableScalableResource<Deployment>) {
+    private fun getCurrentImage(namespace: String, name: String): String {
+        return try {
+            val deployment = kubernetesClient.apps()
+                .deployments()
+                .inNamespace(namespace)
+                .withName(name)
+                .get()
+            deployment?.spec?.template?.spec?.containers?.get(0)?.image ?: "unknown"
+        } catch (e: Exception) {
+            "unknown"
+        }
+    }
+    
+    private fun waitForRollout(
+        deploymentResource: RollableScalableResource<Deployment>,
+        namespace: String,
+        name: String,
+        newImage: String
+    ) {
         try {
             logger.info { "Waiting for rollout to complete..." }
             val timeout = 300000L
@@ -76,6 +119,16 @@ class DeploymentUpdater(
                         readyReplicas == replicas && 
                         availableReplicas == replicas) {
                         logger.info { "Rollout completed successfully" }
+                        
+                        scope.launch {
+                            webhookService.sendWebhook(WebhookEvent(
+                                eventType = WebhookEventType.IMAGE_ROLLOUT_COMPLETED,
+                                timestamp = java.time.Instant.now().toString(),
+                                deployment = DeploymentInfo(namespace, name, newImage),
+                                details = mapOf("rolloutDuration" to "${System.currentTimeMillis() - startTime}ms")
+                            ))
+                        }
+                        
                         return
                     }
                     

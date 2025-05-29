@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: watch-cluster-config
+  namespace: watch-cluster
+data:
+  # Webhook URL - Set this to your webhook endpoint
+  WEBHOOK_URL: "https://ntfy.sixtyfive.me/watchtower"
+  
+  # Webhook event enablement flags (true/false)
+  WEBHOOK_ENABLE_DEPLOYMENT_DETECTED: "false"
+  WEBHOOK_ENABLE_IMAGE_ROLLOUT_STARTED: "false"
+  WEBHOOK_ENABLE_IMAGE_ROLLOUT_COMPLETED: "false"
+  WEBHOOK_ENABLE_IMAGE_ROLLOUT_FAILED: "false"
+  
+  # Optional webhook headers (format: "key1=value1,key2=value2")
+  WEBHOOK_HEADERS: ""
+  
+  # Optional webhook timeout in milliseconds (default: 10000)
+  WEBHOOK_TIMEOUT: "10000"
+  
+  # Optional webhook retry count (default: 3)
+  WEBHOOK_RETRY_COUNT: "3"
