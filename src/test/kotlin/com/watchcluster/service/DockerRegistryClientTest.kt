@@ -169,18 +169,6 @@ class DockerRegistryClientTest {
         assertEquals(expectedDigest, digest)
     }
     
-    @Test
-    fun `test GitHub Container Registry returns empty for now`() = runBlocking {
-        // Given
-        val registry = "ghcr.io"
-        val repository = "owner/repo"
-        
-        // When
-        val tags = registryClient.getTags(registry, repository)
-        
-        // Then
-        assertTrue(tags.isEmpty())
-    }
     
     @Test
     fun `test getGitHubContainerRegistryTags with valid response`() = runBlocking {

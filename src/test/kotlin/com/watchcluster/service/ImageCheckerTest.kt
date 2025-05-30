@@ -10,6 +10,10 @@ import io.mockk.*
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.Arguments
+import org.junit.jupiter.params.provider.MethodSource
+import java.util.stream.Stream
 import kotlin.test.*
 
 class ImageCheckerTest {
@@ -150,6 +154,38 @@ class ImageCheckerTest {
         assertTrue(result.reason?.contains("Error checking digest") == true)
     }
     
+    @Test
+    fun `test version strategy with latest tag in available tags`() = runBlocking {
+        // Given
+        val currentImage = "myapp:v1.0.0"
+        val availableTags = listOf("v1.0.0", "v1.1.0", "v2.0.0", "latest")
+        
+        coEvery { mockRegistryClient.getTags(null, "myapp", any()) } returns availableTags
+        
+        // When
+        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
+        
+        // Then
+        assertTrue(result.hasUpdate)
+        assertEquals("myapp:v2.0.0", result.newImage) // Should pick v2.0.0, not latest
+    }
+    
+    @Test
+    fun `test image without tag defaults to latest in parsing`() = runBlocking {
+        // Given
+        val currentImage = "nginx"  // No tag specified
+        val availableTags = listOf("1.20.0", "1.21.0", "latest")
+        
+        coEvery { mockRegistryClient.getTags(null, "nginx", any()) } returns availableTags
+        
+        // When using Version strategy, it should skip the current "latest" tag
+        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
+        
+        // Then
+        assertFalse(result.hasUpdate) // No version update from "latest"
+        assertEquals("Current tag is not a version tag", result.reason)
+    }
+    
     
     @Test
     fun `test checkLatestUpdate exposes the digest comparison bug`() = runBlocking {
@@ -246,39 +282,21 @@ class ImageCheckerTest {
         assertNotEquals("containrrr/watchtower:v2.0.0", result.newImage)
     }
     
-    @Test
-    fun `test version comparison logic`() {
-        val testCases = listOf(
-            Triple(listOf(1, 0, 0), listOf(1, 0, 0), 0),
-            Triple(listOf(2, 0, 0), listOf(1, 0, 0), 1),
-            Triple(listOf(1, 0, 0), listOf(2, 0, 0), -1),
-            Triple(listOf(1, 1, 0), listOf(1, 0, 0), 1),
-            Triple(listOf(1, 0, 1), listOf(1, 0, 0), 1),
-            Triple(listOf(0, 5, 0), listOf(2, 0, 0), -1) // v0.5.0 < v2.0.0
+    @ParameterizedTest
+    @MethodSource("versionComparisonProvider")
+    fun `test version comparison logic`(v1: List<Int>, v2: List<Int>, expected: Int, description: String) {
+        val result = compareVersions(v1, v2)
+        assertEquals(
+            if (expected > 0) 1 else if (expected < 0) -1 else 0,
+            if (result > 0) 1 else if (result < 0) -1 else 0,
+            "Failed: $description"
         )
-        
-        testCases.forEach { (v1, v2, expected) ->
-            val result = compareVersions(v1, v2)
-            assertEquals(
-                if (expected > 0) 1 else if (expected < 0) -1 else 0,
-                if (result > 0) 1 else if (result < 0) -1 else 0,
-                "Failed comparing $v1 and $v2"
-            )
-        }
     }
     
-    @Test
-    fun `test version tag validation`() {
-        val validVersions = listOf("1.0.0", "v1.0.0", "1.2.3", "v1.2.3", "1.0.0-beta", "v0.5.0")
-        val invalidVersions = listOf("latest", "stable", "master", "main", "dev")
-        
-        validVersions.forEach { tag ->
-            assertTrue(isVersionTag(tag), "Should be valid: $tag")
-        }
-        
-        invalidVersions.forEach { tag ->
-            assertFalse(isVersionTag(tag), "Should be invalid: $tag")
-        }
+    @ParameterizedTest
+    @MethodSource("versionTagValidationProvider")
+    fun `test version tag validation`(tag: String, shouldBeValid: Boolean) {
+        assertEquals(shouldBeValid, isVersionTag(tag), "Tag validation failed for: $tag")
     }
     
     @Test
@@ -299,19 +317,11 @@ class ImageCheckerTest {
         }
     }
     
-    @Test
-    fun `test image string parsing`() {
-        val testCases = listOf(
-            "docker.io/nginx:1.20.0" to Triple("docker.io", "nginx", "1.20.0"),
-            "nginx:1.20.0" to Triple(null, "nginx", "1.20.0"),
-            "nginx" to Triple(null, "nginx", "latest"),
-            "containrrr/watchtower:v0.5.0" to Triple(null, "containrrr/watchtower", "v0.5.0")
-        )
-        
-        testCases.forEach { (input, expected) ->
-            val result = parseImageString(input)
-            assertEquals(expected, result, "Failed for input: $input")
-        }
+    @ParameterizedTest
+    @MethodSource("imageStringParsingProvider")
+    fun `test image string parsing`(input: String, expectedRegistry: String?, expectedRepo: String, expectedTag: String) {
+        val result = parseImageString(input)
+        assertEquals(Triple(expectedRegistry, expectedRepo, expectedTag), result, "Failed for input: $input")
     }
     
     @Test
@@ -468,5 +478,41 @@ class ImageCheckerTest {
                 UpdateStrategy.Version(lockMajorVersion = true)
             else -> UpdateStrategy.Version()
         }
+    }
+    
+    companion object {
+        @JvmStatic
+        fun versionComparisonProvider(): Stream<Arguments> = Stream.of(
+            Arguments.of(listOf(1, 0, 0), listOf(1, 0, 0), 0, "Same version 1.0.0 == 1.0.0"),
+            Arguments.of(listOf(2, 0, 0), listOf(1, 0, 0), 1, "Major version 2.0.0 > 1.0.0"),
+            Arguments.of(listOf(1, 0, 0), listOf(2, 0, 0), -1, "Major version 1.0.0 < 2.0.0"),
+            Arguments.of(listOf(1, 1, 0), listOf(1, 0, 0), 1, "Minor version 1.1.0 > 1.0.0"),
+            Arguments.of(listOf(1, 0, 1), listOf(1, 0, 0), 1, "Patch version 1.0.1 > 1.0.0"),
+            Arguments.of(listOf(0, 5, 0), listOf(2, 0, 0), -1, "v0.5.0 < v2.0.0")
+        )
+        
+        @JvmStatic
+        fun versionTagValidationProvider(): Stream<Arguments> = Stream.of(
+            Arguments.of("1.0.0", true),
+            Arguments.of("v1.0.0", true),
+            Arguments.of("1.2.3", true),
+            Arguments.of("v1.2.3", true),
+            Arguments.of("1.0.0-beta", true),
+            Arguments.of("v0.5.0", true),
+            Arguments.of("latest", false),
+            Arguments.of("stable", false),
+            Arguments.of("master", false),
+            Arguments.of("main", false),
+            Arguments.of("dev", false)
+        )
+        
+        @JvmStatic
+        fun imageStringParsingProvider(): Stream<Arguments> = Stream.of(
+            Arguments.of("docker.io/nginx:1.20.0", "docker.io", "nginx", "1.20.0"),
+            Arguments.of("nginx:1.20.0", null, "nginx", "1.20.0"),
+            Arguments.of("nginx", null, "nginx", "latest"),
+            Arguments.of("containrrr/watchtower:v0.5.0", null, "containrrr/watchtower", "v0.5.0"),
+            Arguments.of("gcr.io/project/app:latest", "gcr.io", "project/app", "latest")
+        )
     }
 }
