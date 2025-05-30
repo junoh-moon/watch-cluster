@@ -76,6 +76,39 @@ class ImageCheckerTest {
         assertTrue(result.reason?.contains("Error") == true || result.reason?.contains("not a version tag") == true)
     }
     
+    @Test
+    fun `checkForUpdate preserves v prefix in version tags`() = runBlocking {
+        // Test case: v0.2.0 should update to v2.0.0, not 2.0.0
+        val result = imageChecker.checkForUpdate(
+            "hub.sixtyfive.me/watch-cluster:v0.2.0",
+            UpdateStrategy.Version()
+        )
+        
+        if (result.hasUpdate) {
+            assertTrue(result.newImage?.contains(":v") == true, 
+                "New image should preserve 'v' prefix: ${result.newImage}")
+            assertFalse(result.newImage?.contains(":2.0.0") == true,
+                "New image should not be :2.0.0 but got: ${result.newImage}")
+        }
+    }
+    
+    @Test
+    fun `checkForUpdate correctly compares versions with v prefix`() = runBlocking {
+        // v0.2.0 should be less than v2.0.0
+        val v1 = parseVersion("v0.2.0")
+        val v2 = parseVersion("v2.0.0")
+        
+        assertEquals(listOf(0, 2, 0), v1, "v0.2.0 should parse to [0, 2, 0]")
+        assertEquals(listOf(2, 0, 0), v2, "v2.0.0 should parse to [2, 0, 0]")
+        
+        assertTrue(compareVersions(v2, v1) > 0, "v2.0.0 should be greater than v0.2.0")
+    }
+    
+    private fun parseVersion(tag: String): List<Int> {
+        val versionPart = tag.removePrefix("v").split("-").first()
+        return versionPart.split(".").map { it.toIntOrNull() ?: 0 }
+    }
+    
     private fun compareVersions(v1: List<Int>, v2: List<Int>): Int {
         val maxLength = maxOf(v1.size, v2.size)
         for (i in 0 until maxLength) {

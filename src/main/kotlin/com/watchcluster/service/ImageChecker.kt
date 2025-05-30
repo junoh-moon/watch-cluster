@@ -59,14 +59,23 @@ class ImageChecker {
         val currentVersion = parseVersion(tag)
         val availableTags = getAvailableTags(registry, repository)
         
+        val hasVPrefix = tag.startsWith("v")
+        
         val newerVersions = availableTags
             .filter { isVersionTag(it) }
-            .map { parseVersion(it) }
-            .filter { compareVersions(it, currentVersion) > 0 }
-            .sortedWith { v1, v2 -> compareVersions(v2, v1) }
+            .map { tagString -> tagString to parseVersion(tagString) }
+            .filter { (_, version) -> compareVersions(version, currentVersion) > 0 }
+            .sortedWith { a, b -> compareVersions(b.second, a.second) }
         
         return if (newerVersions.isNotEmpty()) {
-            val newTag = formatVersion(newerVersions.first())
+            val (originalTag, _) = newerVersions.first()
+            val newTag = if (hasVPrefix && !originalTag.startsWith("v")) {
+                "v$originalTag"
+            } else if (!hasVPrefix && originalTag.startsWith("v")) {
+                originalTag.removePrefix("v")
+            } else {
+                originalTag
+            }
             val newImage = buildImageString(registry, repository, newTag)
             ImageUpdateResult(
                 hasUpdate = true,
