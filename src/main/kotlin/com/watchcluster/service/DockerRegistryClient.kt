@@ -62,12 +62,24 @@ class DockerRegistryClient {
     }
     
     suspend fun getImageDigest(registry: String?, repository: String, tag: String, dockerAuth: DockerAuth? = null): String? = withContext(Dispatchers.IO) {
+        logger.debug { "Getting image digest for registry=$registry, repository=$repository, tag=$tag" }
         try {
-            when {
-                registry == null || registry == "docker.io" -> getDockerHubDigest(repository, tag, dockerAuth)
-                registry.contains("ghcr.io") -> getGitHubContainerRegistryDigest(repository, tag, dockerAuth)
-                else -> getGenericRegistryDigest(registry, repository, tag, dockerAuth)
+            val digest = when {
+                registry == null || registry == "docker.io" -> {
+                    logger.debug { "Using Docker Hub for digest lookup" }
+                    getDockerHubDigest(repository, tag, dockerAuth)
+                }
+                registry.contains("ghcr.io") -> {
+                    logger.debug { "Using GitHub Container Registry for digest lookup" }
+                    getGitHubContainerRegistryDigest(repository, tag, dockerAuth)
+                }
+                else -> {
+                    logger.debug { "Using generic registry for digest lookup" }
+                    getGenericRegistryDigest(registry, repository, tag, dockerAuth)
+                }
             }
+            logger.debug { "Retrieved digest: $digest" }
+            digest
         } catch (e: Exception) {
             logger.error(e) { "Failed to fetch digest for $repository:$tag from $registry" }
             null
@@ -153,6 +165,7 @@ class DockerRegistryClient {
     private fun getDockerHubDigest(repository: String, tag: String, dockerAuth: DockerAuth?): String? {
         val namespace = if (repository.contains("/")) repository else "library/$repository"
         val url = "https://hub.docker.com/v2/repositories/$namespace/tags/$tag/"
+        logger.debug { "Fetching Docker Hub digest from: $url" }
         
         val requestBuilder = Request.Builder()
             .url(url)
@@ -165,19 +178,24 @@ class DockerRegistryClient {
         val request = requestBuilder.build()
         
         client.newCall(request).execute().use { response ->
+            logger.debug { "Docker Hub response code: ${response.code}" }
             if (!response.isSuccessful) {
                 logger.warn { "Failed to fetch digest from Docker Hub: ${response.code}" }
                 return null
             }
             
             val body = response.body?.string() ?: return null
+            logger.debug { "Docker Hub response body: $body" }
             val tagInfo = mapper.readTree(body)
-            return tagInfo.get("digest")?.asText()
+            val digest = tagInfo.get("digest")?.asText()
+            logger.debug { "Extracted Docker Hub digest: $digest" }
+            return digest
         }
     }
     
     private fun getGitHubContainerRegistryDigest(repository: String, tag: String, dockerAuth: DockerAuth?): String? {
         val url = "https://ghcr.io/v2/$repository/manifests/$tag"
+        logger.debug { "Fetching GitHub Container Registry digest from: $url" }
         
         val requestBuilder = Request.Builder()
             .url(url)
@@ -191,18 +209,22 @@ class DockerRegistryClient {
         val request = requestBuilder.build()
         
         client.newCall(request).execute().use { response ->
+            logger.debug { "GitHub Container Registry response code: ${response.code}" }
             if (!response.isSuccessful) {
                 logger.warn { "Failed to fetch manifest from GitHub Container Registry: ${response.code}" }
                 return null
             }
             
             // Docker-Content-Digest header contains the digest
-            return response.header("Docker-Content-Digest")
+            val digest = response.header("Docker-Content-Digest")
+            logger.debug { "GitHub Container Registry digest from header: $digest" }
+            return digest
         }
     }
     
     private fun getGenericRegistryDigest(registry: String, repository: String, tag: String, dockerAuth: DockerAuth?): String? {
         val url = "https://$registry/v2/$repository/manifests/$tag"
+        logger.debug { "Fetching generic registry digest from: $url" }
         
         val requestBuilder = Request.Builder()
             .url(url)
@@ -216,13 +238,16 @@ class DockerRegistryClient {
         val request = requestBuilder.build()
         
         client.newCall(request).execute().use { response ->
+            logger.debug { "Generic registry response code: ${response.code}" }
             if (!response.isSuccessful) {
                 logger.warn { "Failed to fetch manifest from $registry: ${response.code}" }
                 return null
             }
             
             // Docker-Content-Digest header contains the digest
-            return response.header("Docker-Content-Digest")
+            val digest = response.header("Docker-Content-Digest")
+            logger.debug { "Generic registry digest from header: $digest" }
+            return digest
         }
     }
 }

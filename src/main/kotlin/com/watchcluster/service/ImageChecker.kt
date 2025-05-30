@@ -20,14 +20,15 @@ class ImageChecker(
         currentImage: String, 
         strategy: UpdateStrategy,
         namespace: String,
-        imagePullSecrets: List<String>?
+        imagePullSecrets: List<String>?,
+        deploymentName: String? = null
     ): ImageUpdateResult {
         return try {
             val dockerAuth = imagePullSecrets?.let { extractDockerAuth(namespace, it, currentImage) }
             
             when (strategy) {
                 is UpdateStrategy.Version -> checkVersionUpdate(currentImage, strategy, dockerAuth)
-                is UpdateStrategy.Latest -> checkLatestUpdate(currentImage, dockerAuth)
+                is UpdateStrategy.Latest -> checkLatestUpdate(currentImage, dockerAuth, namespace, deploymentName)
             }
         } catch (e: Exception) {
             logger.error(e) { "Error checking image update for $currentImage" }
@@ -158,7 +159,7 @@ class ImageChecker(
         }
     }
 
-    private suspend fun checkLatestUpdate(currentImage: String, dockerAuth: DockerAuth?): ImageUpdateResult {
+    private suspend fun checkLatestUpdate(currentImage: String, dockerAuth: DockerAuth?, namespace: String?, deploymentName: String?): ImageUpdateResult {
         val parts = parseImageString(currentImage)
         val (registry, repository, tag) = parts
         
@@ -172,7 +173,8 @@ class ImageChecker(
         
         try {
             val latestDigest = getImageDigest(registry, repository, "latest", dockerAuth)
-            val currentDigest = getCurrentImageDigest(currentImage, dockerAuth)
+            val currentDigest = getCurrentImageDigest(currentImage, dockerAuth, namespace, deploymentName)
+
             
             return if (latestDigest != null && currentDigest != null && latestDigest != currentDigest) {
                 ImageUpdateResult(
@@ -268,17 +270,33 @@ class ImageChecker(
         return registryClient.getImageDigest(registry, repository, tag, dockerAuth)
     }
 
-    private suspend fun getCurrentImageDigest(image: String, dockerAuth: DockerAuth? = null): String? {
+    private suspend fun getCurrentImageDigest(image: String, dockerAuth: DockerAuth? = null, namespace: String? = null, deploymentName: String? = null): String? {
         return try {
-            // Parse image to get registry, repository, and tag
-            val parts = parseImageString(image)
-            val registry = parts.first
-            val repository = parts.second
-            val tag = parts.third
+            // If we have deployment info, get the actual running digest from Kubernetes
+            if (namespace != null && deploymentName != null) {
+                // Get the running pod's image ID - this is the source of truth
+                val podList = kubernetesClient.pods()
+                    .inNamespace(namespace)
+                    .withLabel("app", deploymentName)
+                    .list()
+                
+                if (podList.items.isNotEmpty()) {
+                    val pod = podList.items.first()
+                    val containerStatus = pod.status?.containerStatuses?.firstOrNull()
+                    val imageID = containerStatus?.imageID
+                    
+                    if (imageID != null && imageID.contains("@")) {
+                        // Extract digest from imageID (format: docker://image@sha256:...)
+                        val digest = imageID.substringAfter("@")
+                        logger.debug { "Got digest from pod: $digest" }
+                        return digest
+                    }
+                }
+            }
             
-            // Get digest from registry instead of local docker daemon
-            logger.debug { "Getting digest for $image from registry" }
-            getImageDigest(registry, repository, tag, dockerAuth)
+            // Fallback: if we can't get from K8s, return null to indicate unknown
+            logger.debug { "Cannot determine current digest from Kubernetes for $image" }
+            null
         } catch (e: Exception) {
             logger.error(e) { "Error getting current image digest for $image" }
             null

@@ -150,6 +150,69 @@ class ImageCheckerTest {
         assertTrue(result.reason?.contains("Error checking digest") == true)
     }
     
+    
+    @Test
+    fun `test checkLatestUpdate exposes the digest comparison bug`() = runBlocking {
+        // Given
+        val currentImage = "nginx:latest"
+        val runningDigest = "sha256:old123"  // What's actually running in K8s
+        val registryDigest = "sha256:new456" // What's in the registry now
+        val namespace = "default"
+        val deploymentName = "nginx-deployment"
+        
+        // Mock registry to return new digest
+        coEvery { mockRegistryClient.getImageDigest(null, "nginx", "latest", any()) } returns registryDigest
+        
+        // Mock Kubernetes deployment and pod to return running digest
+        coEvery { mockKubernetesClient.apps() } returns mockk {
+            coEvery { deployments() } returns mockk {
+                coEvery { inNamespace(namespace) } returns mockk {
+                    coEvery { withName(deploymentName) } returns mockk {
+                        coEvery { get() } returns mockk {
+                            every { metadata } returns mockk {
+                                every { annotations } returns null  // No previous digest in annotations
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Mock pod with running digest
+        coEvery { mockKubernetesClient.pods() } returns mockk {
+            coEvery { inNamespace(namespace) } returns mockk {
+                coEvery { withLabel("app", deploymentName) } returns mockk {
+                    coEvery { list() } returns mockk {
+                        every { items } returns listOf(mockk {
+                            every { status } returns mockk {
+                                every { containerStatuses } returns listOf(mockk {
+                                    every { imageID } returns "docker://nginx@$runningDigest"
+                                })
+                            }
+                        })
+                    }
+                }
+            }
+        }
+        
+        coEvery { mockKubernetesClient.secrets() } returns mockk {
+            coEvery { inNamespace(any()) } returns mockk {
+                coEvery { withName(any()) } returns mockk {
+                    coEvery { get() } returns null
+                }
+            }
+        }
+        
+        // When
+        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
+        
+        // Then - This test should now PASS with the fix
+        assertTrue(result.hasUpdate, "Should detect update when registry digest differs from running digest")
+        assertEquals("Latest image has been updated", result.reason)
+        assertEquals(runningDigest, result.currentDigest, "currentDigest should be the running container digest")
+        assertEquals(registryDigest, result.newDigest, "newDigest should be the registry digest")
+    }
+    
     @Test
     fun `test checkForUpdate handles API errors gracefully`() = runBlocking {
         // Given

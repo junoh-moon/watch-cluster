@@ -117,7 +117,8 @@ class WatchController(
                 deployment.currentImage,
                 deployment.updateStrategy,
                 deployment.namespace,
-                deployment.imagePullSecrets
+                deployment.imagePullSecrets,
+                deployment.name
             )
             
             if (updateResult.hasUpdate) {

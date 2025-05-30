@@ -34,6 +34,28 @@ fun main() = runBlocking {
         
         val kubernetesClient = KubernetesClientBuilder().build()
         logger.info { "Connected to Kubernetes cluster: ${kubernetesClient.configuration.masterUrl}" }
+        
+        // Get current pod information
+        if (podName != "unknown" && podNamespace != "unknown") {
+            try {
+                val pod = kubernetesClient.pods()
+                    .inNamespace(podNamespace)
+                    .withName(podName)
+                    .get()
+                
+                if (pod != null) {
+                    val containerStatuses = pod.status?.containerStatuses ?: emptyList()
+                    containerStatuses.forEach { containerStatus ->
+                        logger.info { "Container: ${containerStatus.name}" }
+                        logger.info { "  Image: ${containerStatus.image}" }
+                        logger.info { "  Image ID: ${containerStatus.imageID}" }
+                    }
+                }
+            } catch (e: Exception) {
+                logger.warn { "Failed to get pod information: ${e.message}" }
+            }
+        }
+        
         logger.info { "==================================" }
         
         val controller = WatchController(kubernetesClient)
