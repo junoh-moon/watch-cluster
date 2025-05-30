@@ -92,6 +92,19 @@ enum class WebhookEventType {
     IMAGE_ROLLOUT_FAILED
 }
 
+enum class UpdateStrategyType(val value: String) {
+    VERSION("version"),
+    LATEST("latest"),
+    VERSION_LOCK_MAJOR("version-lock-major");
+    
+    companion object {
+        fun fromString(value: String): UpdateStrategyType {
+            return values().find { it.value.equals(value, ignoreCase = true) }
+                ?: VERSION
+        }
+    }
+}
+
 object Annotations {
     const val ENABLED = "watch-cluster.io/enabled"
     const val CRON = "watch-cluster.io/cron"

@@ -59,7 +59,7 @@ class WatchController(
         val key = "$namespace/$name"
         
         val cronExpression = annotations[Annotations.CRON] ?: "0 */5 * * * ?"
-        val strategy = parseStrategy(annotations[Annotations.STRATEGY] ?: "version")
+        val strategy = parseStrategy(annotations[Annotations.STRATEGY] ?: UpdateStrategyType.VERSION.value)
         
         val containers = deployment.spec.template.spec.containers
         if (containers.isEmpty()) return
@@ -101,11 +101,10 @@ class WatchController(
     }
 
     private fun parseStrategy(strategyStr: String): UpdateStrategy {
-        return when {
-            strategyStr.lowercase() == "latest" -> UpdateStrategy.Latest
-            strategyStr.contains("lock-major") || strategyStr.contains("lockmajor") -> 
-                UpdateStrategy.Version(lockMajorVersion = true)
-            else -> UpdateStrategy.Version()
+        return when (UpdateStrategyType.fromString(strategyStr)) {
+            UpdateStrategyType.LATEST -> UpdateStrategy.Latest
+            UpdateStrategyType.VERSION_LOCK_MAJOR -> UpdateStrategy.Version(lockMajorVersion = true)
+            UpdateStrategyType.VERSION -> UpdateStrategy.Version()
         }
     }
 
