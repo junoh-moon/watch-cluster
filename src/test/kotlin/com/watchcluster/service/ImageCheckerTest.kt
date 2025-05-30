@@ -4,6 +4,7 @@ import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.api.command.InspectImageCmd
 import com.github.dockerjava.api.command.InspectImageResponse
 import com.watchcluster.model.UpdateStrategy
+import com.watchcluster.model.DockerAuth
 import io.fabric8.kubernetes.client.KubernetesClient
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
@@ -115,9 +116,38 @@ class ImageCheckerTest {
     }
     
     @Test
-    fun `test checkLatestUpdate with digest change`() = runBlocking {
-        // Skip this test as it requires Docker client mocking which is complex
-        // The main bug fix is already tested in other tests
+    fun `test checkLatestUpdate with non-latest tag should not update`() = runBlocking {
+        // Given
+        val currentImage = "myapp:v1.0.0" // Not using latest tag
+        
+        // When
+        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, "default", null)
+        
+        // Then
+        assertFalse(result.hasUpdate)
+        assertEquals("Not using latest tag", result.reason)
+    }
+    
+    @Test
+    fun `test checkLatestUpdate with registry error`() = runBlocking {
+        // Given
+        val currentImage = "myapp:latest"
+        
+        coEvery { mockRegistryClient.getImageDigest(null, "myapp", "latest", any()) } throws Exception("Registry API error")
+        coEvery { mockKubernetesClient.secrets() } returns mockk {
+            coEvery { inNamespace(any()) } returns mockk {
+                coEvery { withName(any()) } returns mockk {
+                    coEvery { get() } returns null
+                }
+            }
+        }
+        
+        // When
+        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, "default", null)
+        
+        // Then
+        assertFalse(result.hasUpdate)
+        assertTrue(result.reason?.contains("Error checking digest") == true)
     }
     
     @Test
@@ -185,6 +215,24 @@ class ImageCheckerTest {
         
         invalidVersions.forEach { tag ->
             assertFalse(isVersionTag(tag), "Should be invalid: $tag")
+        }
+    }
+    
+    @Test
+    fun `test strategy parsing for latest`() {
+        // Test that "latest" strategy is properly parsed
+        val strategies = mapOf(
+            "latest" to UpdateStrategy.Latest,
+            "Latest" to UpdateStrategy.Latest,
+            "LATEST" to UpdateStrategy.Latest,
+            "version" to UpdateStrategy.Version(),
+            "lock-major" to UpdateStrategy.Version(lockMajorVersion = true),
+            "lockmajor" to UpdateStrategy.Version(lockMajorVersion = true)
+        )
+        
+        strategies.forEach { (input, expected) ->
+            val result = parseStrategy(input)
+            assertEquals(expected, result, "Failed for input: $input")
         }
     }
     
@@ -348,5 +396,14 @@ class ImageCheckerTest {
         }
         
         return Triple(registryAndRepo.first, registryAndRepo.second, tag)
+    }
+    
+    private fun parseStrategy(strategyStr: String): UpdateStrategy {
+        return when {
+            strategyStr.lowercase() == "latest" -> UpdateStrategy.Latest
+            strategyStr.contains("lock-major") || strategyStr.contains("lockmajor") -> 
+                UpdateStrategy.Version(lockMajorVersion = true)
+            else -> UpdateStrategy.Version()
+        }
     }
 }
