@@ -123,8 +123,7 @@ class WatchController(
             if (updateResult.hasUpdate) {
                 logger.info {
 					"Found update for ${deployment.namespace}/${deployment.name}: ${updateResult.newImage}" +
-					"\n" +
-					"Reason: ${updateResult.reason}"
+					" ${updateResult.reason}"
 				}
                 deploymentUpdater.updateDeployment(
                     deployment.namespace,
@@ -133,13 +132,12 @@ class WatchController(
                 )
             } else {
                 logger.debug {
-					"No update available for ${deployment.namespace}/${deployment.name}"
-					"\n" +
-					"Reason: ${updateResult.reason}"
+					"No update available for ${deployment.namespace}/${deployment.name}."
+					" ${updateResult.reason}"
 				}
             }
         } catch (e: Exception) {
-            logger.error(e) { "Error checking deployment ${deployment.namespace}/${deployment.name}" }
+            logger.error(e) {"Error checking deployment ${deployment.namespace}/${deployment.name}" }
         }
     }
 
