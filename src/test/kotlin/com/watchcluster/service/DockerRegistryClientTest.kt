@@ -204,8 +204,19 @@ class DockerRegistryClientTest {
         val repository = "owner/repo"
         val tag = "v1.0.0"
         val expectedDigest = "sha256:abc123def456"
+        val anonymousToken = "anonymous-token-123"
         
-        val response = Response.Builder()
+        // Mock anonymous token response
+        val tokenResponse = Response.Builder()
+            .request(Request.Builder().url("http://test").build())
+            .protocol(Protocol.HTTP_1_1)
+            .code(200)
+            .message("OK")
+            .body("{\"token\":\"$anonymousToken\"}".toResponseBody("application/json".toMediaType()))
+            .build()
+        
+        // Mock manifest response
+        val manifestResponse = Response.Builder()
             .request(Request.Builder().url("http://test").build())
             .protocol(Protocol.HTTP_1_1)
             .code(200)
@@ -214,8 +225,14 @@ class DockerRegistryClientTest {
             .body("{}".toResponseBody("application/json".toMediaType()))
             .build()
         
-        every { mockClient.newCall(any()) } returns mockCall
-        every { mockCall.execute() } returns response
+        val mockTokenCall = mockk<okhttp3.Call>()
+        val mockManifestCall = mockk<okhttp3.Call>()
+        
+        every { mockClient.newCall(match { it.url.toString().contains("/token") }) } returns mockTokenCall
+        every { mockTokenCall.execute() } returns tokenResponse
+        
+        every { mockClient.newCall(match { it.url.toString().contains("/manifests/") }) } returns mockManifestCall
+        every { mockManifestCall.execute() } returns manifestResponse
         
         // When
         val digest = registryClient.getImageDigest("ghcr.io", repository, tag)

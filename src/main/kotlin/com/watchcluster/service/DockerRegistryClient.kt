@@ -194,17 +194,27 @@ class DockerRegistryClient {
     }
     
     private fun getGitHubContainerRegistryDigest(repository: String, tag: String, dockerAuth: DockerAuth?): String? {
+        // Get token (anonymous for public repos if no auth provided)
+        val token = when {
+            dockerAuth != null -> dockerAuth.password
+            else -> getAnonymousTokenForGHCR(repository)
+        }
+        
+        if (token == null) {
+            logger.warn { "Failed to obtain token for GitHub Container Registry" }
+            return null
+        }
+        
         val url = "https://ghcr.io/v2/$repository/manifests/$tag"
         logger.debug { "Fetching GitHub Container Registry digest from: $url" }
         
         val requestBuilder = Request.Builder()
             .url(url)
             .get()
-            .addHeader("Accept", "application/vnd.docker.distribution.manifest.v2+json")
+            // Support both Docker V2 and OCI formats
+            .addHeader("Accept", "application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json")
         
-        if (dockerAuth != null) {
-            requestBuilder.header("Authorization", "Bearer ${dockerAuth.password}")
-        }
+        requestBuilder.header("Authorization", "Bearer $token")
         
         val request = requestBuilder.build()
         
@@ -219,6 +229,34 @@ class DockerRegistryClient {
             val digest = response.header("Docker-Content-Digest")
             logger.debug { "GitHub Container Registry digest from header: $digest" }
             return digest
+        }
+    }
+    
+    private fun getAnonymousTokenForGHCR(repository: String): String? {
+        val tokenUrl = "https://ghcr.io/token?scope=repository:$repository:pull"
+        logger.debug { "Fetching anonymous token for repository: $repository" }
+        
+        val request = Request.Builder()
+            .url(tokenUrl)
+            .get()
+            .build()
+        
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    logger.warn { "Failed to fetch anonymous token: ${response.code}" }
+                    return null
+                }
+                
+                val body = response.body?.string() ?: return null
+                val tokenResponse = mapper.readTree(body)
+                val token = tokenResponse.get("token")?.asText()
+                logger.debug { "Successfully obtained anonymous token" }
+                token
+            }
+        } catch (e: Exception) {
+            logger.error(e) { "Error fetching anonymous token" }
+            null
         }
     }
     
