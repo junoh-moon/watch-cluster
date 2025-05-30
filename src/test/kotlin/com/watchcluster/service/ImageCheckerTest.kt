@@ -203,6 +203,112 @@ class ImageCheckerTest {
         }
     }
     
+    @Test
+    fun `test checkForUpdate with major version lock - should update patch version`() = runBlocking {
+        // Given
+        val currentImage = "myapp:v1.0.0"
+        val availableTags = listOf("v1.0.0", "v1.0.1", "v1.0.2", "v1.1.0", "v2.0.0", "v2.1.0")
+        
+        coEvery { mockRegistryClient.getTags(null, "myapp", any()) } returns availableTags
+        
+        // When
+        val result = imageChecker.checkForUpdate(
+            currentImage, 
+            UpdateStrategy.Version(pattern = "semver", lockMajorVersion = true), 
+            "default", 
+            null
+        )
+        
+        // Then
+        assertTrue(result.hasUpdate)
+        assertEquals("myapp:v1.1.0", result.newImage) // Should update to latest within major version 1
+        assertTrue(result.reason?.contains("Found newer version") == true)
+    }
+    
+    @Test
+    fun `test checkForUpdate with major version lock - should not update to new major`() = runBlocking {
+        // Given
+        val currentImage = "myapp:v1.2.3"
+        val availableTags = listOf("v1.2.3", "v2.0.0", "v3.0.0")
+        
+        coEvery { mockRegistryClient.getTags(null, "myapp", any()) } returns availableTags
+        
+        // When
+        val result = imageChecker.checkForUpdate(
+            currentImage, 
+            UpdateStrategy.Version(pattern = "semver", lockMajorVersion = true), 
+            "default", 
+            null
+        )
+        
+        // Then
+        assertFalse(result.hasUpdate)
+        assertEquals("No newer version available within major version 1", result.reason)
+    }
+    
+    @Test
+    fun `test checkForUpdate with major version lock - handle version 0`() = runBlocking {
+        // Given
+        val currentImage = "myapp:v0.5.0"
+        val availableTags = listOf("v0.5.0", "v0.5.1", "v0.6.0", "v1.0.0", "v2.0.0")
+        
+        coEvery { mockRegistryClient.getTags(null, "myapp", any()) } returns availableTags
+        
+        // When
+        val result = imageChecker.checkForUpdate(
+            currentImage, 
+            UpdateStrategy.Version(pattern = "semver", lockMajorVersion = true), 
+            "default", 
+            null
+        )
+        
+        // Then
+        assertTrue(result.hasUpdate)
+        assertEquals("myapp:v0.6.0", result.newImage) // Should update within major version 0
+    }
+    
+    @Test
+    fun `test checkForUpdate without major version lock - normal behavior`() = runBlocking {
+        // Given
+        val currentImage = "myapp:v1.0.0"
+        val availableTags = listOf("v1.0.0", "v1.1.0", "v2.0.0")
+        
+        coEvery { mockRegistryClient.getTags(null, "myapp", any()) } returns availableTags
+        
+        // When
+        val result = imageChecker.checkForUpdate(
+            currentImage, 
+            UpdateStrategy.Version(pattern = "semver", lockMajorVersion = false), 
+            "default", 
+            null
+        )
+        
+        // Then
+        assertTrue(result.hasUpdate)
+        assertEquals("myapp:v2.0.0", result.newImage) // Should update to highest version
+    }
+    
+    @Test
+    fun `test checkForUpdate with major version lock and prerelease versions`() = runBlocking {
+        // Given
+        val currentImage = "myapp:v1.0.0"
+        val availableTags = listOf("v1.0.0", "v1.1.0-beta", "v1.1.0", "v1.2.0-rc1", "v2.0.0-alpha")
+        
+        coEvery { mockRegistryClient.getTags(null, "myapp", any()) } returns availableTags
+        
+        // When
+        val result = imageChecker.checkForUpdate(
+            currentImage, 
+            UpdateStrategy.Version(pattern = "semver", lockMajorVersion = true), 
+            "default", 
+            null
+        )
+        
+        // Then
+        assertTrue(result.hasUpdate)
+        assertEquals("myapp:v1.2.0-rc1", result.newImage) // Should include prerelease within major version
+    }
+    
     private fun parseVersion(tag: String): List<Int> {
         val versionPart = tag.removePrefix("v").split("-").first()
         return versionPart.split(".").map { it.toIntOrNull() ?: 0 }

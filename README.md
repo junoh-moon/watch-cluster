@@ -112,7 +112,7 @@ spec:
 |------------|------|------|--------|
 | `watch-cluster.io/enabled` | 모니터링 활성화 여부 | 예 | - |
 | `watch-cluster.io/cron` | 업데이트 확인 주기 (Quartz cron) | 아니오 | `0 */5 * * * ?` |
-| `watch-cluster.io/strategy` | 업데이트 전략 (`version` 또는 `latest`) | 아니오 | `version` |
+| `watch-cluster.io/strategy` | 업데이트 전략 (`version`, `version-lock-major`, `latest`) | 아니오 | `version` |
 
 ### 업데이트 전략
 
@@ -130,7 +130,20 @@ annotations:
 - `v1.0.0`, `v1.0.1`, `v1.1.0`
 - `1.0.0-beta`, `1.0.0-rc1`
 
-#### 2. Latest 전략
+#### 2. Version Lock Major 전략
+Major 버전을 고정하고 Minor/Patch 버전만 업데이트합니다:
+
+```yaml
+annotations:
+  watch-cluster.io/enabled: "true"
+  watch-cluster.io/strategy: "version-lock-major"
+```
+
+예시:
+- 현재 버전이 `v1.0.0`인 경우, `v1.1.0`이나 `v1.0.1`로는 업데이트되지만 `v2.0.0`으로는 업데이트되지 않습니다.
+- 현재 버전이 `v0.5.0`인 경우, `v0.6.0`이나 `v0.5.1`로는 업데이트되지만 `v1.0.0`으로는 업데이트되지 않습니다.
+
+#### 3. Latest 전략
 `latest` 태그를 사용하는 이미지에 적합합니다:
 
 ```yaml

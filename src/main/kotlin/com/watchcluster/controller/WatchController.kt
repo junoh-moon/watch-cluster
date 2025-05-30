@@ -101,8 +101,10 @@ class WatchController(
     }
 
     private fun parseStrategy(strategyStr: String): UpdateStrategy {
-        return when (strategyStr.lowercase()) {
-            "latest" -> UpdateStrategy.Latest
+        return when {
+            strategyStr.lowercase() == "latest" -> UpdateStrategy.Latest
+            strategyStr.contains("lock-major") || strategyStr.contains("lockmajor") -> 
+                UpdateStrategy.Version(lockMajorVersion = true)
             else -> UpdateStrategy.Version()
         }
     }

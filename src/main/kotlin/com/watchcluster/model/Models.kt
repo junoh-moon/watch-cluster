@@ -13,7 +13,10 @@ data class WatchedDeployment(
 )
 
 sealed class UpdateStrategy {
-    data class Version(val pattern: String = "semver") : UpdateStrategy()
+    data class Version(
+        val pattern: String = "semver",
+        val lockMajorVersion: Boolean = false
+    ) : UpdateStrategy()
     object Latest : UpdateStrategy()
 }
 

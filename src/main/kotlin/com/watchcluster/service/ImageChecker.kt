@@ -46,7 +46,7 @@ class ImageChecker(
             val dockerAuth = imagePullSecrets?.let { extractDockerAuth(namespace, it, currentImage) }
             
             when (strategy) {
-                is UpdateStrategy.Version -> checkVersionUpdate(currentImage, dockerAuth)
+                is UpdateStrategy.Version -> checkVersionUpdate(currentImage, strategy, dockerAuth)
                 is UpdateStrategy.Latest -> checkLatestUpdate(currentImage, dockerAuth)
             }
         } catch (e: Exception) {
@@ -100,7 +100,7 @@ class ImageChecker(
         return null
     }
     
-    private suspend fun checkVersionUpdate(currentImage: String, dockerAuth: DockerAuth?): ImageUpdateResult {
+    private suspend fun checkVersionUpdate(currentImage: String, strategy: UpdateStrategy.Version, dockerAuth: DockerAuth?): ImageUpdateResult {
         val parts = parseImageString(currentImage)
         val (registry, repository, tag) = parts
         
@@ -116,11 +116,19 @@ class ImageChecker(
         val availableTags = getAvailableTags(registry, repository, dockerAuth)
         
         val hasVPrefix = tag.startsWith("v")
+        val currentMajorVersion = currentVersion.getOrNull(0) ?: 0
         
         val newerVersions = availableTags
             .filter { isVersionTag(it) }
             .map { tagString -> tagString to parseVersion(tagString) }
-            .filter { (_, version) -> compareVersions(version, currentVersion) > 0 }
+            .filter { (_, version) -> 
+                if (strategy.lockMajorVersion) {
+                    val candidateMajor = version.getOrNull(0) ?: 0
+                    candidateMajor == currentMajorVersion && compareVersions(version, currentVersion) > 0
+                } else {
+                    compareVersions(version, currentVersion) > 0
+                }
+            }
             .sortedWith { a, b -> compareVersions(b.second, a.second) }
         
         return if (newerVersions.isNotEmpty()) {
@@ -140,10 +148,15 @@ class ImageChecker(
                 reason = "Found newer version: $newTag"
             )
         } else {
+            val noUpdateReason = if (strategy.lockMajorVersion) {
+                "No newer version available within major version $currentMajorVersion"
+            } else {
+                "No newer version available"
+            }
             ImageUpdateResult(
                 hasUpdate = false,
                 currentImage = currentImage,
-                reason = "No newer version available"
+                reason = noUpdateReason
             )
         }
     }
