@@ -8,6 +8,7 @@ data class WatchedDeployment(
     val cronExpression: String,
     val updateStrategy: UpdateStrategy,
     val currentImage: String,
+    val imagePullSecrets: List<String>? = null,
     val lastChecked: Instant? = null
 )
 
@@ -21,6 +22,11 @@ data class ImageUpdateResult(
     val currentImage: String,
     val newImage: String? = null,
     val reason: String? = null
+)
+
+data class DockerAuth(
+    val username: String,
+    val password: String
 )
 
 data class WebhookConfig(

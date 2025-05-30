@@ -19,7 +19,7 @@ class WatchController(
 ) {
     private val webhookConfig = WebhookConfig.fromEnvironment()
     private val webhookService = WebhookService(webhookConfig)
-    private val imageChecker = ImageChecker()
+    private val imageChecker = ImageChecker(kubernetesClient)
     private val deploymentUpdater = DeploymentUpdater(kubernetesClient, webhookService)
     private val cronScheduler = CronScheduler()
     private val watchedDeployments = ConcurrentHashMap<String, WatchedDeployment>()
@@ -66,12 +66,15 @@ class WatchController(
         
         val currentImage = containers[0].image
         
+        val imagePullSecrets = deployment.spec.template.spec.imagePullSecrets?.map { it.name }
+        
         val watchedDeployment = WatchedDeployment(
             namespace = namespace,
             name = name,
             cronExpression = cronExpression,
             updateStrategy = strategy,
-            currentImage = currentImage
+            currentImage = currentImage,
+            imagePullSecrets = imagePullSecrets
         )
         
         watchedDeployments[key] = watchedDeployment
@@ -110,7 +113,9 @@ class WatchController(
             
             val updateResult = imageChecker.checkForUpdate(
                 deployment.currentImage,
-                deployment.updateStrategy
+                deployment.updateStrategy,
+                deployment.namespace,
+                deployment.imagePullSecrets
             )
             
             if (updateResult.hasUpdate) {

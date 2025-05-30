@@ -1,17 +1,25 @@
 package com.watchcluster.service
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.core.DefaultDockerClientConfig
 import com.github.dockerjava.core.DockerClientBuilder
 import com.github.dockerjava.httpclient5.ApacheDockerHttpClient
+import com.watchcluster.model.DockerAuth
 import com.watchcluster.model.ImageUpdateResult
 import com.watchcluster.model.UpdateStrategy
+import io.fabric8.kubernetes.client.KubernetesClient
 import mu.KotlinLogging
 import java.time.Duration
+import java.util.Base64
 
 private val logger = KotlinLogging.logger {}
 
-class ImageChecker {
+class ImageChecker(
+    private val kubernetesClient: KubernetesClient
+) {
+    private val registryClient = DockerRegistryClient()
+    private val objectMapper = ObjectMapper()
     private val dockerClient: DockerClient
 
     init {
@@ -28,11 +36,18 @@ class ImageChecker {
             .build()
     }
 
-    suspend fun checkForUpdate(currentImage: String, strategy: UpdateStrategy): ImageUpdateResult {
+    suspend fun checkForUpdate(
+        currentImage: String, 
+        strategy: UpdateStrategy,
+        namespace: String,
+        imagePullSecrets: List<String>?
+    ): ImageUpdateResult {
         return try {
+            val dockerAuth = imagePullSecrets?.let { extractDockerAuth(namespace, it, currentImage) }
+            
             when (strategy) {
-                is UpdateStrategy.Version -> checkVersionUpdate(currentImage)
-                is UpdateStrategy.Latest -> checkLatestUpdate(currentImage)
+                is UpdateStrategy.Version -> checkVersionUpdate(currentImage, dockerAuth)
+                is UpdateStrategy.Latest -> checkLatestUpdate(currentImage, dockerAuth)
             }
         } catch (e: Exception) {
             logger.error(e) { "Error checking image update for $currentImage" }
@@ -44,7 +59,48 @@ class ImageChecker {
         }
     }
 
-    private fun checkVersionUpdate(currentImage: String): ImageUpdateResult {
+    private fun extractDockerAuth(namespace: String, secretNames: List<String>, image: String): DockerAuth? {
+        val (registry, _, _) = parseImageString(image)
+        val registryUrl = registry ?: "index.docker.io"
+        
+        for (secretName in secretNames) {
+            try {
+                val secret = kubernetesClient.secrets()
+                    .inNamespace(namespace)
+                    .withName(secretName)
+                    .get()
+                
+                if (secret?.type == "kubernetes.io/dockerconfigjson") {
+                    val dockerConfigJson = secret.data?.get(".dockerconfigjson") ?: continue
+                    val decodedConfig = Base64.getDecoder().decode(dockerConfigJson).toString(Charsets.UTF_8)
+                    val configRoot = objectMapper.readTree(decodedConfig)
+                    val authsNode = configRoot.get("auths") ?: continue
+                    
+                    // Try exact match first
+                    var authNode = authsNode.get(registryUrl)
+                    
+                    // Try common variations
+                    if (authNode == null && registryUrl == "index.docker.io") {
+                        authNode = authsNode.get("https://index.docker.io/v1/") 
+                            ?: authsNode.get("docker.io")
+                            ?: authsNode.get("https://docker.io")
+                    }
+                    
+                    if (authNode != null) {
+                        val authString = authNode.get("auth")?.asText() ?: continue
+                        val decodedAuth = Base64.getDecoder().decode(authString).toString(Charsets.UTF_8)
+                        val (username, password) = decodedAuth.split(":", limit = 2)
+                        return DockerAuth(username, password)
+                    }
+                }
+            } catch (e: Exception) {
+                logger.error(e) { "Error extracting auth from secret $secretName" }
+            }
+        }
+        return null
+    }
+    
+    private suspend fun checkVersionUpdate(currentImage: String, dockerAuth: DockerAuth?): ImageUpdateResult {
         val parts = parseImageString(currentImage)
         val (registry, repository, tag) = parts
         
@@ -57,7 +113,7 @@ class ImageChecker {
         }
         
         val currentVersion = parseVersion(tag)
-        val availableTags = getAvailableTags(registry, repository)
+        val availableTags = getAvailableTags(registry, repository, dockerAuth)
         
         val hasVPrefix = tag.startsWith("v")
         
@@ -92,7 +148,7 @@ class ImageChecker {
         }
     }
 
-    private fun checkLatestUpdate(currentImage: String): ImageUpdateResult {
+    private suspend fun checkLatestUpdate(currentImage: String, dockerAuth: DockerAuth?): ImageUpdateResult {
         val parts = parseImageString(currentImage)
         val (registry, repository, tag) = parts
         
@@ -105,10 +161,10 @@ class ImageChecker {
         }
         
         try {
-            val latestDigest = getImageDigest(registry, repository, "latest")
+            val latestDigest = getImageDigest(registry, repository, "latest", dockerAuth)
             val currentDigest = getCurrentImageDigest(currentImage)
             
-            return if (latestDigest != currentDigest) {
+            return if (latestDigest != null && currentDigest != null && latestDigest != currentDigest) {
                 ImageUpdateResult(
                     hasUpdate = true,
                     currentImage = currentImage,
@@ -185,20 +241,27 @@ class ImageChecker {
         return 0
     }
 
-    private fun getAvailableTags(registry: String?, repository: String): List<String> {
+    private suspend fun getAvailableTags(registry: String?, repository: String, dockerAuth: DockerAuth?): List<String> {
         return try {
-            listOf("1.0.0", "1.0.1", "1.1.0", "2.0.0", "latest")
+            registryClient.getTags(registry, repository, dockerAuth)
         } catch (e: Exception) {
             logger.error(e) { "Error fetching tags for $repository" }
             emptyList()
         }
     }
 
-    private fun getImageDigest(registry: String?, repository: String, tag: String): String {
-        return "sha256:dummy-${System.currentTimeMillis()}"
+    private suspend fun getImageDigest(registry: String?, repository: String, tag: String, dockerAuth: DockerAuth?): String? {
+        return registryClient.getImageDigest(registry, repository, tag, dockerAuth)
     }
 
-    private fun getCurrentImageDigest(image: String): String {
-        return "sha256:current-digest"
+    private suspend fun getCurrentImageDigest(image: String): String? {
+        return try {
+            // Use docker client to get current image digest
+            val imageInfo = dockerClient.inspectImageCmd(image).exec()
+            imageInfo.repoDigests?.firstOrNull()?.split("@")?.lastOrNull()
+        } catch (e: Exception) {
+            logger.error(e) { "Error getting current image digest for $image" }
+            null
+        }
     }
 }
