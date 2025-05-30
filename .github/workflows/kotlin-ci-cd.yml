@@ -89,6 +89,7 @@ jobs:
             patch=${VERSION_PARTS[2]}
             
             minor=$((minor + 1))
+            patch=0
             new_version="v${major}.${minor}.${patch}"
           fi
           
