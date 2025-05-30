@@ -6,7 +6,7 @@
         </encoder>
     </appender>
 
-    <logger name="com.watchcluster" level="INFO"/>
+    <logger name="com.watchcluster" level="DEBUG"/>
     <logger name="io.fabric8.kubernetes" level="INFO"/>
     <logger name="com.github.dockerjava" level="INFO"/>
 
