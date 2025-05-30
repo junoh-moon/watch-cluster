@@ -12,7 +12,9 @@ import org.junit.jupiter.api.Test
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.net.http.HttpHeaders
 import java.time.Instant
+import java.util.*
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -216,5 +218,104 @@ class WebhookServiceTest {
         val request = capturedRequest.captured
         assertTrue(request.headers().firstValue("Content-Type").isPresent)
         assertEquals("application/json", request.headers().firstValue("Content-Type").get())
+    }
+    
+    @Test
+    fun `should respect 429 rate limit with Retry-After header`() = runBlocking {
+        val config = WebhookConfig(
+            url = "https://example.com/webhook",
+            enableDeploymentDetected = true,
+            retryCount = 3
+        )
+        webhookService = WebhookService(config)
+        
+        val mockHeaders = mockk<HttpHeaders>()
+        every { mockHeaders.firstValue("Retry-After") } returns Optional.of("5") // 5 seconds
+        
+        var callCount = 0
+        every { mockHttpClient.send(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) } answers {
+            callCount++
+            when (callCount) {
+                1 -> {
+                    every { mockHttpResponse.statusCode() } returns 429
+                    every { mockHttpResponse.body() } returns "Rate limit exceeded"
+                    every { mockHttpResponse.headers() } returns mockHeaders
+                    mockHttpResponse
+                }
+                else -> {
+                    every { mockHttpResponse.statusCode() } returns 200
+                    every { mockHttpResponse.body() } returns """{"status": "ok"}"""
+                    mockHttpResponse
+                }
+            }
+        }
+        
+        val event = WebhookEvent(
+            eventType = WebhookEventType.DEPLOYMENT_DETECTED,
+            timestamp = Instant.now().toString(),
+            deployment = DeploymentInfo(
+                namespace = "default",
+                name = "test-deployment",
+                image = "nginx:1.21"
+            )
+        )
+        
+        val startTime = System.currentTimeMillis()
+        webhookService.sendWebhook(event)
+        val elapsedTime = System.currentTimeMillis() - startTime
+        
+        // Should wait at least 5 seconds (5000ms) as specified in Retry-After header
+        assertTrue(elapsedTime >= 5000, "Should have waited at least 5 seconds for Retry-After")
+        verify(exactly = 2) { mockHttpClient.send(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) }
+    }
+    
+    @Test
+    fun `should handle 429 without Retry-After header using exponential backoff`() = runBlocking {
+        val config = WebhookConfig(
+            url = "https://example.com/webhook",
+            enableDeploymentDetected = true,
+            retryCount = 3
+        )
+        webhookService = WebhookService(config)
+        
+        val mockHeaders = mockk<HttpHeaders>()
+        every { mockHeaders.firstValue("Retry-After") } returns Optional.empty()
+        
+        var callCount = 0
+        every { mockHttpClient.send(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) } answers {
+            callCount++
+            when (callCount) {
+                1 -> {
+                    every { mockHttpResponse.statusCode() } returns 429
+                    every { mockHttpResponse.body() } returns "Rate limit exceeded"
+                    every { mockHttpResponse.headers() } returns mockHeaders
+                    mockHttpResponse
+                }
+                else -> {
+                    every { mockHttpResponse.statusCode() } returns 200
+                    every { mockHttpResponse.body() } returns """{"status": "ok"}"""
+                    mockHttpResponse
+                }
+            }
+        }
+        
+        val event = WebhookEvent(
+            eventType = WebhookEventType.DEPLOYMENT_DETECTED,
+            timestamp = Instant.now().toString(),
+            deployment = DeploymentInfo(
+                namespace = "default",
+                name = "test-deployment",
+                image = "nginx:1.21"
+            )
+        )
+        
+        val startTime = System.currentTimeMillis()
+        webhookService.sendWebhook(event)
+        val elapsedTime = System.currentTimeMillis() - startTime
+        
+        // Should use exponential backoff (1 second for first retry)
+        assertTrue(elapsedTime >= 1000, "Should have waited at least 1 second with exponential backoff")
+        assertTrue(elapsedTime < 3000, "Should not have waited more than 3 seconds")
+        verify(exactly = 2) { mockHttpClient.send(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) }
     }
 }
