@@ -122,36 +122,9 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.NAME }}:${{ steps.short-sha.outputs.sha }}
             ${{ env.REGISTRY }}/${{ env.NAME }}:${{ steps.get-version.outputs.new_version }}
   
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build
-    if: success()
-    steps:
-      -
-        name: short-sha
-        uses: benjlevesque/short-sha@v2.2
-        id: short-sha
-      -
-        name: Change k8s image tag and deploy
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          key: ${{ secrets.SSH_KEY }}
-          port: ${{ secrets.SSH_PORT }}
-          script: |
-            # Set KUBECONFIG environment variable
-            export KUBECONFIG=$HOME/.kube/config
-            
-            # Update the deployment with new image tag
-            /usr/local/bin/kubectl set image deployment/watch-cluster-deployment watch-cluster=${{ env.REGISTRY }}/${{ env.NAME }}:${{ needs.build.outputs.new_version }} -n watch-cluster
-            
-            # Wait for rollout to complete
-            /usr/local/bin/kubectl rollout status deployment/watch-cluster-deployment -n watch-cluster --timeout=300s
-  
   notification:
     runs-on: ubuntu-latest
-    needs: [ build, deploy ]
+    needs: [ build ]
     if: success()
     steps:
       -
@@ -163,4 +136,4 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
-            curl --data "[$(date +\%F)] Deploying ${{ env.REGISTRY }}/${{ env.NAME }}:${{ needs.build.outputs.new_version }} completed!" https://ntfy.sixtyfive.me/workflow
+            curl --data "[$(date +\%F)] Building ${{ env.REGISTRY }}/${{ env.NAME }}:${{ needs.build.outputs.new_version }} completed!" https://ntfy.sixtyfive.me/workflow
