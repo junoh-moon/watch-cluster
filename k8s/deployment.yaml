@@ -9,6 +9,8 @@ metadata:
     watch-cluster.io/enabled: "true"
     watch-cluster.io/cron: "0 * * * * ?"  # Every minute
     watch-cluster.io/strategy: "version"
+
+    reloader.stakater.com/auto: "true"
 spec:
   replicas: 1
   strategy:
@@ -27,7 +29,7 @@ spec:
       serviceAccountName: watch-cluster
       containers:
       - name: watch-cluster
-        image: hub.sixtyfive.me/watch-cluster:v0.7.0
+        image: hub.sixtyfive.me/watch-cluster:v0.10.0
         imagePullPolicy: Always
         resources:
           requests:

@@ -7,6 +7,7 @@ Kubernetes용 자동 컨테이너 이미지 업데이트 도구입니다. Docker
 - Annotation 기반 선택적 모니터링
 - 시맨틱 버저닝 기반 자동 업데이트
 - Latest 태그 이미지의 변경 감지 및 업데이트
+- 임의 태그(stable, release-candidate 등)의 다이제스트 기반 업데이트 감지
 - Cron 표현식을 사용한 유연한 스케줄링
 - Deployment로 배포되어 클러스터에서 실행
 - 롤링 업데이트 완료까지 대기
@@ -29,7 +30,8 @@ Kubernetes용 자동 컨테이너 이미지 업데이트 도구입니다. Docker
 - `rbac.yaml`: ServiceAccount, ClusterRole, ClusterRoleBinding 설정
 - `configmap.yaml`: 웹훅 설정을 위한 ConfigMap
 - `deployment.yaml`: watch-cluster 애플리케이션 배포 설정
-- `example-deployment.yaml`: 테스트용 예시 애플리케이션
+- `example-deployment.yaml`: 테스트용 예시 애플리케이션 (버전 태그)
+- `example-deployment-stable.yaml`: 임의 태그(stable, custom tag) 사용 예시
 
 ### 설치
 
@@ -145,7 +147,7 @@ annotations:
 - 현재 버전이 `v0.5.0`인 경우, `v0.6.0`이나 `v0.5.1`로는 업데이트되지만 `v1.0.0`으로는 업데이트되지 않습니다.
 
 #### 3. Latest 전략
-`latest` 태그를 사용하는 이미지에 적합합니다:
+`latest` 태그 또는 버전이 아닌 임의의 태그를 사용하는 이미지에 적합합니다:
 
 ```yaml
 annotations:
@@ -153,7 +155,15 @@ annotations:
   watch-cluster.io/strategy: "latest"
 ```
 
-이미지 다이제스트를 비교하여 실제 변경 사항을 감지합니다.
+이미지 다이제스트를 비교하여 실제 변경 사항을 감지합니다. 다음과 같은 태그들을 지원합니다:
+- `latest` - 가장 최신 빌드
+- `stable` - 안정 버전
+- `release-candidate` - 릴리스 후보
+- `release-openvino` - 특정 프레임워크용 릴리스
+- `dev`, `nightly`, `edge` - 개발/실험 버전
+- 기타 버전 형식이 아닌 모든 태그
+
+**참고**: 버전 형식의 태그(예: `v1.0.0`, `1.2.3`)는 Version 전략을 사용해야 합니다.
 
 ### Cron 표현식 예시
 

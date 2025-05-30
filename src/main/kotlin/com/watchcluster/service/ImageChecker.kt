@@ -163,27 +163,28 @@ class ImageChecker(
         val parts = parseImageString(currentImage)
         val (registry, repository, tag) = parts
         
-        if (tag != "latest") {
+        // Check if this is a version tag - those should use version strategy
+        if (isVersionTag(tag)) {
             return ImageUpdateResult(
                 hasUpdate = false,
                 currentImage = currentImage,
-                reason = "Not using latest tag"
+                reason = "Use version strategy for version tags"
             )
         }
         
         try {
-            val latestDigest = getImageDigest(registry, repository, "latest", dockerAuth)
+            val registryDigest = getImageDigest(registry, repository, tag, dockerAuth)
             val currentDigest = getCurrentImageDigest(currentImage, dockerAuth, namespace, deploymentName)
 
             
-            return if (latestDigest != null && currentDigest != null && latestDigest != currentDigest) {
+            return if (registryDigest != null && currentDigest != null && registryDigest != currentDigest) {
                 ImageUpdateResult(
                     hasUpdate = true,
                     currentImage = currentImage,
                     newImage = currentImage,
-                    reason = "Latest image has been updated",
+                    reason = if (tag == "latest") "Latest image has been updated" else "Tag '$tag' has been updated",
                     currentDigest = currentDigest,
-                    newDigest = latestDigest
+                    newDigest = registryDigest
                 )
             } else {
                 ImageUpdateResult(
@@ -191,11 +192,11 @@ class ImageChecker(
                     currentImage = currentImage,
                     reason = "Already using the latest image",
                     currentDigest = currentDigest,
-                    newDigest = latestDigest
+                    newDigest = registryDigest
                 )
             }
         } catch (e: Exception) {
-            logger.error(e) { "Error checking latest image digest" }
+            logger.error(e) { "Error checking image digest for tag '$tag'" }
             return ImageUpdateResult(
                 hasUpdate = false,
                 currentImage = currentImage,

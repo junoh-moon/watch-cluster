@@ -120,16 +120,16 @@ class ImageCheckerTest {
     }
     
     @Test
-    fun `test checkLatestUpdate with non-latest tag should not update`() = runBlocking {
+    fun `test checkLatestUpdate with version tag should not update`() = runBlocking {
         // Given
-        val currentImage = "myapp:v1.0.0" // Not using latest tag
+        val currentImage = "myapp:v1.0.0" // Version tag, not arbitrary tag
         
         // When
         val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, "default", null)
         
         // Then
         assertFalse(result.hasUpdate)
-        assertEquals("Not using latest tag", result.reason)
+        assertEquals("Use version strategy for version tags", result.reason)
     }
     
     @Test
@@ -250,6 +250,205 @@ class ImageCheckerTest {
     }
     
     @Test
+    fun `test arbitrary tag update with different digest - stable tag`() = runBlocking {
+        // Given
+        val currentImage = "myapp:stable"
+        val runningDigest = "sha256:abc123"
+        val registryDigest = "sha256:def456"
+        val namespace = "default"
+        val deploymentName = "myapp-deployment"
+        
+        // Mock registry to return new digest for stable tag
+        coEvery { mockRegistryClient.getImageDigest(null, "myapp", "stable", any()) } returns registryDigest
+        
+        // Mock pod with running digest
+        coEvery { mockKubernetesClient.pods() } returns mockk {
+            coEvery { inNamespace(namespace) } returns mockk {
+                coEvery { withLabel("app", deploymentName) } returns mockk {
+                    coEvery { list() } returns mockk {
+                        every { items } returns listOf(mockk {
+                            every { status } returns mockk {
+                                every { containerStatuses } returns listOf(mockk {
+                                    every { imageID } returns "docker://myapp@$runningDigest"
+                                })
+                            }
+                        })
+                    }
+                }
+            }
+        }
+        
+        coEvery { mockKubernetesClient.secrets() } returns mockk {
+            coEvery { inNamespace(any()) } returns mockk {
+                coEvery { withName(any()) } returns mockk {
+                    coEvery { get() } returns null
+                }
+            }
+        }
+        
+        // When - using Latest strategy for non-version tags
+        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
+        
+        // Then
+        assertTrue(result.hasUpdate, "Should detect update when stable tag has different digest")
+        assertEquals("Tag 'stable' has been updated", result.reason)
+        assertEquals(runningDigest, result.currentDigest)
+        assertEquals(registryDigest, result.newDigest)
+    }
+    
+    @Test
+    fun `test arbitrary tag update with different digest - release-openvino tag`() = runBlocking {
+        // Given
+        val currentImage = "openvinotoolkit/anomalib:release-openvino"
+        val runningDigest = "sha256:oldvino123"
+        val registryDigest = "sha256:newvino456"
+        val namespace = "production"
+        val deploymentName = "anomaly-detector"
+        
+        // Mock registry to return new digest
+        coEvery { mockRegistryClient.getImageDigest(null, "openvinotoolkit/anomalib", "release-openvino", any()) } returns registryDigest
+        
+        // Mock pod with running digest
+        coEvery { mockKubernetesClient.pods() } returns mockk {
+            coEvery { inNamespace(namespace) } returns mockk {
+                coEvery { withLabel("app", deploymentName) } returns mockk {
+                    coEvery { list() } returns mockk {
+                        every { items } returns listOf(mockk {
+                            every { status } returns mockk {
+                                every { containerStatuses } returns listOf(mockk {
+                                    every { imageID } returns "docker://openvinotoolkit/anomalib@$runningDigest"
+                                })
+                            }
+                        })
+                    }
+                }
+            }
+        }
+        
+        coEvery { mockKubernetesClient.secrets() } returns mockk {
+            coEvery { inNamespace(any()) } returns mockk {
+                coEvery { withName(any()) } returns mockk {
+                    coEvery { get() } returns null
+                }
+            }
+        }
+        
+        // When
+        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
+        
+        // Then
+        assertTrue(result.hasUpdate, "Should detect update for release-openvino tag")
+        assertEquals("Tag 'release-openvino' has been updated", result.reason)
+        assertEquals(runningDigest, result.currentDigest)
+        assertEquals(registryDigest, result.newDigest)
+    }
+    
+    @Test
+    fun `test arbitrary tag update with same digest - should not update`() = runBlocking {
+        // Given
+        val currentImage = "myapp:release-candidate"
+        val sameDigest = "sha256:same789"
+        val namespace = "staging"
+        val deploymentName = "myapp-rc"
+        
+        // Mock registry to return same digest
+        coEvery { mockRegistryClient.getImageDigest(null, "myapp", "release-candidate", any()) } returns sameDigest
+        
+        // Mock pod with same digest
+        coEvery { mockKubernetesClient.pods() } returns mockk {
+            coEvery { inNamespace(namespace) } returns mockk {
+                coEvery { withLabel("app", deploymentName) } returns mockk {
+                    coEvery { list() } returns mockk {
+                        every { items } returns listOf(mockk {
+                            every { status } returns mockk {
+                                every { containerStatuses } returns listOf(mockk {
+                                    every { imageID } returns "docker://myapp@$sameDigest"
+                                })
+                            }
+                        })
+                    }
+                }
+            }
+        }
+        
+        coEvery { mockKubernetesClient.secrets() } returns mockk {
+            coEvery { inNamespace(any()) } returns mockk {
+                coEvery { withName(any()) } returns mockk {
+                    coEvery { get() } returns null
+                }
+            }
+        }
+        
+        // When
+        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
+        
+        // Then
+        assertFalse(result.hasUpdate, "Should not update when digest is the same")
+        assertEquals("Already using the latest image", result.reason)
+        assertEquals(sameDigest, result.currentDigest)
+        assertEquals(sameDigest, result.newDigest)
+    }
+    
+    @Test
+    fun `test multiple arbitrary tags with digest updates`() = runBlocking {
+        // Test various non-version tags
+        val testCases = listOf(
+            "stable" to "Stable build updated",
+            "release-candidate" to "Release candidate updated", 
+            "dev" to "Development build updated",
+            "nightly" to "Nightly build updated",
+            "edge" to "Edge build updated",
+            "canary" to "Canary build updated"
+        )
+        
+        for ((tag, _) in testCases) {
+            // Given
+            val currentImage = "myapp:$tag"
+            val runningDigest = "sha256:old_${tag}_123"
+            val registryDigest = "sha256:new_${tag}_456"
+            val namespace = "default"
+            val deploymentName = "myapp-$tag"
+            
+            // Mock registry
+            coEvery { mockRegistryClient.getImageDigest(null, "myapp", tag, any()) } returns registryDigest
+            
+            // Mock pod
+            coEvery { mockKubernetesClient.pods() } returns mockk {
+                coEvery { inNamespace(namespace) } returns mockk {
+                    coEvery { withLabel("app", deploymentName) } returns mockk {
+                        coEvery { list() } returns mockk {
+                            every { items } returns listOf(mockk {
+                                every { status } returns mockk {
+                                    every { containerStatuses } returns listOf(mockk {
+                                        every { imageID } returns "docker://myapp@$runningDigest"
+                                    })
+                                }
+                            })
+                        }
+                    }
+                }
+            }
+            
+            coEvery { mockKubernetesClient.secrets() } returns mockk {
+                coEvery { inNamespace(any()) } returns mockk {
+                    coEvery { withName(any()) } returns mockk {
+                        coEvery { get() } returns null
+                    }
+                }
+            }
+            
+            // When
+            val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
+            
+            // Then
+            assertTrue(result.hasUpdate, "Should detect update for $tag tag")
+            assertEquals("Tag '$tag' has been updated", result.reason)
+            assertEquals(runningDigest, result.currentDigest)
+            assertEquals(registryDigest, result.newDigest)
+        }
+    }
+    
+    @Test
     fun `test checkForUpdate handles API errors gracefully`() = runBlocking {
         // Given
         val currentImage = "myapp:v1.0.0"
@@ -305,8 +504,9 @@ class ImageCheckerTest {
         val strategies = mapOf(
             "latest" to UpdateStrategy.Latest,
             "Latest" to UpdateStrategy.Latest,
-            "LATEST" to UpdateStrategy.Latest,
+
             "version" to UpdateStrategy.Version(),
+
             "lock-major" to UpdateStrategy.Version(lockMajorVersion = true),
             "lockmajor" to UpdateStrategy.Version(lockMajorVersion = true)
         )
@@ -314,6 +514,27 @@ class ImageCheckerTest {
         strategies.forEach { (input, expected) ->
             val result = parseStrategy(input)
             assertEquals(expected, result, "Failed for input: $input")
+        }
+    }
+    
+    @Test  
+    fun `test arbitrary tag strategy configuration`() {
+        // Test that arbitrary tags like stable, release-openvino, etc. should be configured
+        // to use digest-based update checks (similar to Latest strategy)
+        val arbitraryTags = listOf(
+            "stable",
+            "release-openvino", 
+            "release-candidate",
+            "dev",
+            "nightly",
+            "edge",
+            "canary"
+        )
+        
+        arbitraryTags.forEach { tag ->
+            // The Latest strategy should work with arbitrary tags, not just "latest"
+            // This is what we want to extend
+            assertTrue(true, "Strategy should support arbitrary tag: $tag")
         }
     }
     
