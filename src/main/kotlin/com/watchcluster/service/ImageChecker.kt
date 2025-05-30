@@ -121,11 +121,28 @@ class ImageChecker(
                 originalTag
             }
             val newImage = buildImageString(registry, repository, newTag)
+            
+            // Get digests for version updates
+            val currentDigest = try {
+                getCurrentImageDigest(currentImage, dockerAuth)
+            } catch (e: Exception) {
+                logger.debug { "Could not get current digest: ${e.message}" }
+                null
+            }
+            val newDigest = try {
+                getImageDigest(registry, repository, newTag, dockerAuth)
+            } catch (e: Exception) {
+                logger.debug { "Could not get new digest: ${e.message}" }
+                null
+            }
+            
             ImageUpdateResult(
                 hasUpdate = true,
                 currentImage = currentImage,
                 newImage = newImage,
-                reason = "Found newer version: $newTag"
+                reason = "Found newer version: $newTag",
+                currentDigest = currentDigest,
+                newDigest = newDigest
             )
         } else {
             val noUpdateReason = if (strategy.lockMajorVersion) {
@@ -162,13 +179,17 @@ class ImageChecker(
                     hasUpdate = true,
                     currentImage = currentImage,
                     newImage = currentImage,
-                    reason = "Latest image has been updated"
+                    reason = "Latest image has been updated",
+                    currentDigest = currentDigest,
+                    newDigest = latestDigest
                 )
             } else {
                 ImageUpdateResult(
                     hasUpdate = false,
                     currentImage = currentImage,
-                    reason = "Already using the latest image"
+                    reason = "Already using the latest image",
+                    currentDigest = currentDigest,
+                    newDigest = latestDigest
                 )
             }
         } catch (e: Exception) {

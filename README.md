@@ -183,9 +183,13 @@ env:
 업데이트가 수행되면 deployment에 다음 annotation이 추가됩니다:
 
 ```yaml
-watch-cluster.io/last-update: "1704067200000"
+watch-cluster.io/last-update: "2024-01-01T12:00:00+09:00"  # ISO 8601 형식 (로컬 시간대)
 watch-cluster.io/last-update-image: "myapp:1.0.1"
+watch-cluster.io/last-update-from-digest: "sha256:abc123..."  # 업데이트 전 다이제스트
+watch-cluster.io/last-update-to-digest: "sha256:def456..."    # 업데이트 후 다이제스트
 ```
+
+특히 `latest` 태그를 사용하는 경우, 다이제스트 정보를 통해 실제 이미지가 변경되었는지 확인할 수 있습니다.
 
 ### 웹훅 설정
 

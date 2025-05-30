@@ -24,7 +24,9 @@ data class ImageUpdateResult(
     val hasUpdate: Boolean,
     val currentImage: String,
     val newImage: String? = null,
-    val reason: String? = null
+    val reason: String? = null,
+    val currentDigest: String? = null,
+    val newDigest: String? = null
 )
 
 data class DockerAuth(

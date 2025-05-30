@@ -128,7 +128,8 @@ class WatchController(
                 deploymentUpdater.updateDeployment(
                     deployment.namespace,
                     deployment.name,
-                    updateResult.newImage!!
+                    updateResult.newImage!!,
+                    updateResult
                 )
             } else {
                 logger.debug {

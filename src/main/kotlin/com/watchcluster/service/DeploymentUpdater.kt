@@ -8,6 +8,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import mu.KotlinLogging
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 
 private val logger = KotlinLogging.logger {}
 
@@ -16,7 +18,7 @@ class DeploymentUpdater(
     private val webhookService: WebhookService
 ) {
     private val scope = CoroutineScope(Dispatchers.Default)
-    suspend fun updateDeployment(namespace: String, name: String, newImage: String) {
+    suspend fun updateDeployment(namespace: String, name: String, newImage: String, updateResult: ImageUpdateResult? = null) {
         try {
             logger.info { "Updating deployment $namespace/$name with new image: $newImage" }
             
@@ -48,7 +50,7 @@ class DeploymentUpdater(
             
             logger.info { "Successfully updated deployment $namespace/$name to image: $newImage" }
             
-            addUpdateAnnotation(deploymentResource, newImage)
+            addUpdateAnnotation(deploymentResource, newImage, updateResult)
             
             waitForRollout(deploymentResource, namespace, name, newImage)
             
@@ -68,12 +70,24 @@ class DeploymentUpdater(
         }
     }
     
-    private fun addUpdateAnnotation(deploymentResource: RollableScalableResource<Deployment>, newImage: String) {
+    private fun addUpdateAnnotation(deploymentResource: RollableScalableResource<Deployment>, newImage: String, updateResult: ImageUpdateResult?) {
         try {
             val deployment = deploymentResource.get()
             val annotations = deployment.metadata.annotations ?: mutableMapOf()
-            annotations["watch-cluster.io/last-update"] = System.currentTimeMillis().toString()
+            
+            // Use ISO 8601 format with local timezone
+            val timestamp = ZonedDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+            annotations["watch-cluster.io/last-update"] = timestamp
             annotations["watch-cluster.io/last-update-image"] = newImage
+            
+            // Add digest information if available
+            updateResult?.currentDigest?.let {
+                annotations["watch-cluster.io/last-update-from-digest"] = it
+            }
+            updateResult?.newDigest?.let {
+                annotations["watch-cluster.io/last-update-to-digest"] = it
+            }
+            
             deployment.metadata.annotations = annotations
             deploymentResource.patch(deployment)
         } catch (e: Exception) {
