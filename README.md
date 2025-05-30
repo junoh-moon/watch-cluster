@@ -19,6 +19,7 @@ Kubernetes용 자동 컨테이너 이미지 업데이트 도구입니다. Docker
 - Kubernetes 클러스터 (v1.20+)
 - kubectl 설치 및 클러스터 접근 권한
 - Docker (이미지 빌드용)
+- 프라이빗 레지스트리 사용 시 imagePullSecret 설정 필요
 
 ### Kubernetes 매니페스트 파일
 
@@ -278,8 +279,9 @@ annotations:
 ## 제한사항
 
 - 현재는 각 Deployment의 첫 번째 컨테이너만 업데이트합니다
-- Private 레지스트리 인증은 추가 설정이 필요합니다
+- Private 레지스트리 인증은 Kubernetes imagePullSecret을 통해 지원됩니다
 - 롤백 기능은 포함되어 있지 않습니다
+- Docker 데몬에 직접 접근하지 않고 레지스트리 API를 통해 이미지 정보를 확인합니다
 
 ## 문제 해결
 

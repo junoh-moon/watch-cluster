@@ -27,7 +27,7 @@ spec:
       serviceAccountName: watch-cluster
       containers:
       - name: watch-cluster
-        image: hub.sixtyfive.me/watch-cluster:v0.5.1
+        image: hub.sixtyfive.me/watch-cluster:v0.7.0
         imagePullPolicy: Always
         resources:
           requests:
@@ -36,9 +36,6 @@ spec:
           limits:
             memory: "512Mi"
             cpu: "200m"
-        volumeMounts:
-        - name: docker-socket
-          mountPath: /var/run/docker.sock
         env:
         - name: POD_NAME
           valueFrom:
@@ -88,10 +85,5 @@ spec:
             configMapKeyRef:
               name: watch-cluster-config
               key: WEBHOOK_RETRY_COUNT
-      volumes:
-      - name: docker-socket
-        hostPath:
-          path: /var/run/docker.sock
-          type: Socket
       imagePullSecrets:
         - name: regcred

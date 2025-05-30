@@ -1,16 +1,11 @@
 package com.watchcluster.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.github.dockerjava.api.DockerClient
-import com.github.dockerjava.core.DefaultDockerClientConfig
-import com.github.dockerjava.core.DockerClientBuilder
-import com.github.dockerjava.httpclient5.ApacheDockerHttpClient
 import com.watchcluster.model.DockerAuth
 import com.watchcluster.model.ImageUpdateResult
 import com.watchcluster.model.UpdateStrategy
 import io.fabric8.kubernetes.client.KubernetesClient
 import mu.KotlinLogging
-import java.time.Duration
 import java.util.Base64
 
 private val logger = KotlinLogging.logger {}
@@ -20,21 +15,6 @@ class ImageChecker(
 ) {
     private val registryClient = DockerRegistryClient()
     private val objectMapper = ObjectMapper()
-    private val dockerClient: DockerClient
-
-    init {
-        val config = DefaultDockerClientConfig.createDefaultConfigBuilder().build()
-        val httpClient = ApacheDockerHttpClient.Builder()
-            .dockerHost(config.dockerHost)
-            .sslConfig(config.sslConfig)
-            .connectionTimeout(Duration.ofSeconds(30))
-            .responseTimeout(Duration.ofSeconds(45))
-            .build()
-        
-        dockerClient = DockerClientBuilder.getInstance(config)
-            .withDockerHttpClient(httpClient)
-            .build()
-    }
 
     suspend fun checkForUpdate(
         currentImage: String, 
@@ -175,7 +155,7 @@ class ImageChecker(
         
         try {
             val latestDigest = getImageDigest(registry, repository, "latest", dockerAuth)
-            val currentDigest = getCurrentImageDigest(currentImage)
+            val currentDigest = getCurrentImageDigest(currentImage, dockerAuth)
             
             return if (latestDigest != null && currentDigest != null && latestDigest != currentDigest) {
                 ImageUpdateResult(
@@ -267,11 +247,17 @@ class ImageChecker(
         return registryClient.getImageDigest(registry, repository, tag, dockerAuth)
     }
 
-    private suspend fun getCurrentImageDigest(image: String): String? {
+    private suspend fun getCurrentImageDigest(image: String, dockerAuth: DockerAuth? = null): String? {
         return try {
-            // Use docker client to get current image digest
-            val imageInfo = dockerClient.inspectImageCmd(image).exec()
-            imageInfo.repoDigests?.firstOrNull()?.split("@")?.lastOrNull()
+            // Parse image to get registry, repository, and tag
+            val parts = parseImageString(image)
+            val registry = parts.first
+            val repository = parts.second
+            val tag = parts.third
+            
+            // Get digest from registry instead of local docker daemon
+            logger.debug { "Getting digest for $image from registry" }
+            getImageDigest(registry, repository, tag, dockerAuth)
         } catch (e: Exception) {
             logger.error(e) { "Error getting current image digest for $image" }
             null
