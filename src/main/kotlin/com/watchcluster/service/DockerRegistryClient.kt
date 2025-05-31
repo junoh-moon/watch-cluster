@@ -212,7 +212,14 @@ class DockerRegistryClient {
             .url(url)
             .get()
             // Support both Docker V2 and OCI formats
-            .addHeader("Accept", "application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json")
+            .accept(
+                listOf(
+                    "application/vnd.docker.distribution.manifest.v2+json",
+                    "application/vnd.docker.distribution.manifest.list.v2+json",
+                    "application/vnd.oci.image.manifest.v1+json",
+                    "application/vnd.oci.image.index.v1+json"
+                ).joinToString(", ")
+            )
         
         requestBuilder.header("Authorization", "Bearer $token")
         

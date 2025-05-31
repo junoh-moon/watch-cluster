@@ -122,8 +122,10 @@ class WatchController(
             
             if (updateResult.hasUpdate) {
                 logger.info {
-					"Found update for ${deployment.namespace}/${deployment.name}: ${updateResult.newImage}" +
-					" ${updateResult.reason}"
+					listOf(
+						"Found update for ${deployment.namespace}/${deployment.name}: ${updateResult.newImage}",
+						updateResult.reason
+					).joinToString(" ")
 				}
                 deploymentUpdater.updateDeployment(
                     deployment.namespace,

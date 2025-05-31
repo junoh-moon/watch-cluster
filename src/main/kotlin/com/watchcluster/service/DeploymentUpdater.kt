@@ -147,8 +147,11 @@ class DeploymentUpdater(
                     }
                     
                     logger.debug { 
-                        "Rollout progress - Updated: $updatedReplicas/$replicas, " +
-                        "Ready: $readyReplicas/$replicas, Available: $availableReplicas/$replicas" 
+                        listOf(
+                            "Rollout progress - Updated: $updatedReplicas/$replicas",
+                            "Ready: $readyReplicas/$replicas",
+                            "Available: $availableReplicas/$replicas"
+                        ).joinToString(", ")
                     }
                 }
                 

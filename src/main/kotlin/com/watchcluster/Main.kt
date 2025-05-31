@@ -10,16 +10,16 @@ private val logger = KotlinLogging.logger {}
 
 fun main() = runBlocking {
     logger.info { "Starting watch-cluster..." }
-    
+
     try {
         // Load and log environment variables
         val podName = System.getenv("POD_NAME") ?: "unknown"
         val podNamespace = System.getenv("POD_NAMESPACE") ?: "unknown"
-        
+
         logger.info { "=== watch-cluster Configuration ===" }
         logger.info { "Pod Name: $podName" }
         logger.info { "Pod Namespace: $podNamespace" }
-        
+
         // Load webhook configuration
         val webhookConfig = WebhookConfig.fromEnvironment()
         logger.info { "Webhook URL: ${webhookConfig.url ?: "Not configured"}" }
@@ -30,11 +30,17 @@ fun main() = runBlocking {
         logger.info { "  - Image Rollout Started: ${webhookConfig.enableImageRolloutStarted}" }
         logger.info { "  - Image Rollout Completed: ${webhookConfig.enableImageRolloutCompleted}" }
         logger.info { "  - Image Rollout Failed: ${webhookConfig.enableImageRolloutFailed}" }
-        logger.info { "Webhook Headers: ${if (webhookConfig.headers.isEmpty()) "None" else webhookConfig.headers.keys.joinToString(", ") { key -> "$key=***" }}" }
-        
+        logger.info {
+            val headers = webhookConfig.headers.entries.takeIf { it.isNotEmpty() }?.joinToString(", ")
+                            ?: "None"
+            "Webhook Headers: ${headers}"
+        }
+
         val kubernetesClient = KubernetesClientBuilder().build()
-        logger.info { "Connected to Kubernetes cluster: ${kubernetesClient.configuration.masterUrl}" }
-        
+        logger.info {
+            "Connected to Kubernetes cluster: ${kubernetesClient.configuration.masterUrl}"
+        }
+
         // Get current pod information
         if (podName != "unknown" && podNamespace != "unknown") {
             try {
@@ -42,7 +48,7 @@ fun main() = runBlocking {
                     .inNamespace(podNamespace)
                     .withName(podName)
                     .get()
-                
+
                 if (pod != null) {
                     val containerStatuses = pod.status?.containerStatuses ?: emptyList()
                     containerStatuses.forEach { containerStatus ->
@@ -55,9 +61,9 @@ fun main() = runBlocking {
                 logger.warn { "Failed to get pod information: ${e.message}" }
             }
         }
-        
+
         logger.info { "==================================" }
-        
+
         val controller = WatchController(kubernetesClient)
         controller.start()
     } catch (e: Exception) {
