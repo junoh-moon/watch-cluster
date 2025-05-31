@@ -212,7 +212,7 @@ class DockerRegistryClient {
             .url(url)
             .get()
             // Support both Docker V2 and OCI formats
-            .accept(
+            .header("Accept", 
                 listOf(
                     "application/vnd.docker.distribution.manifest.v2+json",
                     "application/vnd.docker.distribution.manifest.list.v2+json",
