@@ -18,7 +18,7 @@ class DeploymentUpdater(
     private val webhookService: WebhookService
 ) {
     private val scope = CoroutineScope(Dispatchers.Default)
-    suspend fun updateDeployment(namespace: String, name: String, newImage: String, updateResult: ImageUpdateResult? = null, updateStrategy: UpdateStrategy? = null) {
+    suspend fun updateDeployment(namespace: String, name: String, newImage: String, updateResult: ImageUpdateResult? = null) {
         try {
             logger.info { "Updating deployment $namespace/$name with new image: $newImage" }
             
@@ -44,32 +44,15 @@ class DeploymentUpdater(
                 throw IllegalStateException("No containers found in deployment $namespace/$name")
             }
             
-            // Check if this is a latest strategy update and handle specially
-            if (updateStrategy is UpdateStrategy.Latest && updateResult?.newDigest != null) {
-                // Handle latest tag with special pull policy logic
-                // This method internally handles the rollout wait
-                handleLatestTagUpdate(deploymentResource, deployment, newImage, updateResult)
-                
-                logger.info { "Successfully updated deployment $namespace/$name to image: $newImage (latest strategy)" }
-                
-                // Add update annotation after successful rollout
-                addUpdateAnnotation(deploymentResource, newImage, updateResult)
-                
-                // Verify the digest after rollout
-                verifyDeployedDigest(namespace, name, updateResult.newDigest)
-            } else {
-                // Normal update flow for non-latest strategy
-                containers[0].image = newImage
-                deploymentResource.patch(deployment)
-                
-                logger.info { "Successfully updated deployment $namespace/$name to image: $newImage" }
-                
-                // Add update annotation
-                addUpdateAnnotation(deploymentResource, newImage, updateResult)
-                
-                // Wait for rollout to complete
-                waitForRollout(deploymentResource, namespace, name, newImage)
-            }
+            containers[0].image = newImage
+            
+            deploymentResource.patch(deployment)
+            
+            logger.info { "Successfully updated deployment $namespace/$name to image: $newImage" }
+            
+            addUpdateAnnotation(deploymentResource, newImage, updateResult)
+            
+            waitForRollout(deploymentResource, namespace, name, newImage)
             
         } catch (e: Exception) {
             logger.error(e) { "Failed to update deployment $namespace/$name" }
@@ -178,126 +161,6 @@ class DeploymentUpdater(
             logger.warn { "Rollout timeout after ${timeout/1000} seconds" }
         } catch (e: Exception) {
             logger.warn(e) { "Error waiting for rollout" }
-        }
-    }
-    
-    private fun handleLatestTagUpdate(
-        deploymentResource: RollableScalableResource<Deployment>,
-        deployment: Deployment,
-        newImage: String,
-        updateResult: ImageUpdateResult
-    ) {
-        logger.info { "Handling latest tag update with special pull policy logic" }
-        
-        val container = deployment.spec.template.spec.containers[0]
-        
-        // Backup the original imagePullPolicy
-        val originalPullPolicy = container.imagePullPolicy
-        logger.info { "Backing up original imagePullPolicy: $originalPullPolicy" }
-        
-        try {
-            // Step 1: Set imagePullPolicy to Always to force pull the latest image
-            container.imagePullPolicy = "Always"
-            container.image = newImage
-            
-            // Apply the patch with Always pull policy
-            deploymentResource.patch(deployment)
-            logger.info { "Applied deployment patch with imagePullPolicy=Always" }
-            
-            // Step 2: Trigger a rollout restart to force the pull
-            logger.info { "Triggering rollout restart to force image pull" }
-            deploymentResource.rolling().restart()
-            
-            // Step 3: Wait for rollout to complete
-            waitForRollout(deploymentResource, deployment.metadata.namespace, deployment.metadata.name, newImage)
-            
-            // Step 4: Restore the original imagePullPolicy after rollout is complete
-            if (originalPullPolicy != null && originalPullPolicy != "Always") {
-                logger.info { "Restoring original imagePullPolicy: $originalPullPolicy" }
-                val updatedDeployment = deploymentResource.get()
-                    ?: throw IllegalStateException("Deployment not found after rollout")
-                updatedDeployment.spec.template.spec.containers[0].imagePullPolicy = originalPullPolicy
-                deploymentResource.patch(updatedDeployment)
-                logger.info { "Successfully restored imagePullPolicy to: $originalPullPolicy" }
-            }
-            
-        } catch (e: Exception) {
-            logger.error(e) { "Error during latest tag update" }
-            
-            // Attempt to restore original pull policy on error
-            try {
-                if (originalPullPolicy != null && originalPullPolicy != "Always") {
-                    logger.info { "Attempting to restore original imagePullPolicy after error" }
-                    val currentDeployment = deploymentResource.get()
-                    if (currentDeployment != null) {
-                        currentDeployment.spec.template.spec.containers[0].imagePullPolicy = originalPullPolicy
-                        deploymentResource.patch(currentDeployment)
-                    }
-                }
-            } catch (restoreError: Exception) {
-                logger.error(restoreError) { "Failed to restore original imagePullPolicy" }
-            }
-            
-            throw e
-        }
-    }
-    
-    private fun verifyDeployedDigest(namespace: String, deploymentName: String, expectedDigest: String) {
-        try {
-            logger.info { "Verifying deployed image digest matches expected: $expectedDigest" }
-            
-            // Give pods time to fully start
-            Thread.sleep(10000)
-            
-            val podList = kubernetesClient.pods()
-                .inNamespace(namespace)
-                .withLabel("app", deploymentName)
-                .list()
-            
-            if (podList.items.isNotEmpty()) {
-                val runningPods = podList.items.filter { pod ->
-                    pod.status?.phase == "Running"
-                }
-                
-                if (runningPods.isNotEmpty()) {
-                    val pod = runningPods.first()
-                    val containerStatus = pod.status?.containerStatuses?.firstOrNull()
-                    val imageID = containerStatus?.imageID
-                    
-                    if (imageID != null && imageID.contains("@")) {
-                        val actualDigest = imageID.substringAfter("@")
-                        
-                        if (actualDigest == expectedDigest) {
-                            logger.info { "✓ Digest verification successful: deployed image matches expected digest" }
-                        } else {
-                            logger.warn { 
-                                "⚠ Digest mismatch! Expected: $expectedDigest, Actual: $actualDigest"
-                            }
-                            
-                            scope.launch {
-                                webhookService.sendWebhook(WebhookEvent(
-                                    eventType = WebhookEventType.IMAGE_ROLLOUT_COMPLETED,
-                                    timestamp = java.time.Instant.now().toString(),
-                                    deployment = DeploymentInfo(namespace, deploymentName, ""),
-                                    details = mapOf(
-                                        "warning" to "Digest mismatch after deployment",
-                                        "expectedDigest" to expectedDigest,
-                                        "actualDigest" to actualDigest
-                                    )
-                                ))
-                            }
-                        }
-                    } else {
-                        logger.warn { "Could not extract digest from pod imageID: $imageID" }
-                    }
-                } else {
-                    logger.warn { "No running pods found for verification" }
-                }
-            } else {
-                logger.warn { "No pods found for deployment $deploymentName" }
-            }
-        } catch (e: Exception) {
-            logger.error(e) { "Error verifying deployed digest" }
         }
     }
 }
