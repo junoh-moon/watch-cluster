@@ -114,7 +114,7 @@ class DeploymentUpdater(
         }
     }
     
-    private fun waitForRollout(
+    private suspend fun waitForRollout(
         deploymentResource: RollableScalableResource<Deployment>,
         namespace: String,
         name: String,
@@ -161,10 +161,10 @@ class DeploymentUpdater(
                     }
                 }
                 
-                Thread.sleep(5000)
+                kotlinx.coroutines.delay(5000)
             }
             
-            logger.warn { "Rollout timeout after ${timeout/1000} seconds" }
+            logger.warn { "Rollout timeout after \\${timeout/1000} seconds" }
         } catch (e: Exception) {
             logger.warn(e) { "Error waiting for rollout" }
         }
