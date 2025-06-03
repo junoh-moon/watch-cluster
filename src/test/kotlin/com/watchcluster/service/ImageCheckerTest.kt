@@ -651,6 +651,43 @@ class ImageCheckerTest {
         assertEquals("myapp:v1.2.0-rc1", result.newImage) // Should include prerelease within major version
     }
     
+    @Test
+    fun `test parseImageString handles digest correctly`() {
+        val checker = ImageChecker(mockKubernetesClient)
+        val privateParse = ImageChecker::class.java.getDeclaredMethod("parseImageString", String::class.java)
+        privateParse.isAccessible = true
+
+        // 1. digest 없는 기본 케이스
+        val (reg1, repo1, tag1) = privateParse.invoke(checker, "nginx:latest") as Triple<*, *, *>
+        assertNull(reg1)
+        assertEquals("nginx", repo1)
+        assertEquals("latest", tag1)
+
+        // 2. digest가 붙은 케이스
+        val (reg2, repo2, tag2) = privateParse.invoke(checker, "nginx:latest@sha256:abc") as Triple<*, *, *>
+        assertNull(reg2)
+        assertEquals("nginx", repo2)
+        assertEquals("latest", tag2)
+
+        // 3. registry, tag, digest 모두 있는 케이스
+        val (reg3, repo3, tag3) = privateParse.invoke(checker, "my.registry.com/app:1.2.3@sha256:def") as Triple<*, *, *>
+        assertEquals("my.registry.com", reg3)
+        assertEquals("app", repo3)
+        assertEquals("1.2.3", tag3)
+
+        // 4. registry만 있는 케이스
+        val (reg4, repo4, tag4) = privateParse.invoke(checker, "my.registry.com/app:latest") as Triple<*, *, *>
+        assertEquals("my.registry.com", reg4)
+        assertEquals("app", repo4)
+        assertEquals("latest", tag4)
+
+        // 5. digest만 붙은 케이스(tag 생략)
+        val (reg5, repo5, tag5) = privateParse.invoke(checker, "nginx@sha256:abc") as Triple<*, *, *>
+        assertNull(reg5)
+        assertEquals("nginx", repo5)
+        assertEquals("latest", tag5)
+    }
+    
     private fun parseVersion(tag: String): List<Int> {
         val versionPart = tag.removePrefix("v").split("-").first()
         return versionPart.split(".").map { it.toIntOrNull() ?: 0 }

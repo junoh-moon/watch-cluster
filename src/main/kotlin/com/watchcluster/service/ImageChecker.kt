@@ -205,8 +205,20 @@ class ImageChecker(
         }
     }
 
+    /**
+     * Docker 이미지 문자열을 registry, repository, tag로 파싱합니다.
+     *
+     * @param image 파싱할 이미지 문자열 (예: "nginx:latest", "my.registry.com/app:1.2.3", "nginx:latest@sha256:abcd...")
+     * @return Triple<registry, repository, tag> (registry는 없을 수 있음)
+     *
+     * 이미지에 digest(@sha256:...)가 붙어 있는 경우에도, digest를 제외한 부분만 파싱하여
+     * registry/repository:tag 형태로 반환합니다.
+     * 예) "nginx:latest@sha256:abcd" -> (null, "nginx", "latest")
+     *     "my.registry.com/app:1.2.3@sha256:abcd" -> ("my.registry.com", "app", "1.2.3")
+     */
     private fun parseImageString(image: String): Triple<String?, String, String> {
-        val parts = image.split(":")
+        val imageWithoutDigest = image.substringBefore("@")
+        val parts = imageWithoutDigest.split(":")
         val tag = if (parts.size > 1) parts.last() else "latest"
         val repoWithRegistry = parts.first()
         

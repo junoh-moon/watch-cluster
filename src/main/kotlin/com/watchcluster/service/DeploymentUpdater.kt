@@ -44,15 +44,21 @@ class DeploymentUpdater(
                 throw IllegalStateException("No containers found in deployment $namespace/$name")
             }
             
-            containers[0].image = newImage
+            // digest가 있으면 명시적으로 붙여서 배포
+            val imageToSet = updateResult
+                ?.newDigest
+                ?.takeIf { it.isNotBlank() }
+                ?.let { "${newImage}@${updateResult.newDigest}" }
+                ?: newImage
+            containers[0].image = imageToSet
             
             deploymentResource.patch(deployment)
             
-            logger.info { "Successfully updated deployment $namespace/$name to image: $newImage" }
+            logger.info { "Successfully updated deployment $namespace/$name to image: $imageToSet" }
             
-            addUpdateAnnotation(deploymentResource, newImage, updateResult)
+            addUpdateAnnotation(deploymentResource, imageToSet, updateResult)
             
-            waitForRollout(deploymentResource, namespace, name, newImage)
+            waitForRollout(deploymentResource, namespace, name, imageToSet)
             
         } catch (e: Exception) {
             logger.error(e) { "Failed to update deployment $namespace/$name" }
