@@ -5,6 +5,8 @@ import com.github.dockerjava.api.command.InspectImageCmd
 import com.github.dockerjava.api.command.InspectImageResponse
 import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.model.DockerAuth
+import com.watchcluster.util.ImageParser
+import com.watchcluster.util.ImageComponents
 import io.fabric8.kubernetes.client.KubernetesClient
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
@@ -485,7 +487,7 @@ class ImageCheckerTest {
     @ParameterizedTest
     @MethodSource("versionComparisonProvider")
     fun `test version comparison logic`(v1: List<Int>, v2: List<Int>, expected: Int, description: String) {
-        val result = compareVersions(v1, v2)
+        val result = ImageParser.compareVersions(v1, v2)
         assertEquals(
             if (expected > 0) 1 else if (expected < 0) -1 else 0,
             if (result > 0) 1 else if (result < 0) -1 else 0,
@@ -496,7 +498,7 @@ class ImageCheckerTest {
     @ParameterizedTest
     @MethodSource("versionTagValidationProvider")
     fun `test version tag validation`(tag: String, shouldBeValid: Boolean) {
-        assertEquals(shouldBeValid, isVersionTag(tag), "Tag validation failed for: $tag")
+        assertEquals(shouldBeValid, ImageParser.isVersionTag(tag), "Tag validation failed for: $tag")
     }
     
     @Test
@@ -542,8 +544,8 @@ class ImageCheckerTest {
     @ParameterizedTest
     @MethodSource("imageStringParsingProvider")
     fun `test image string parsing`(input: String, expectedRegistry: String?, expectedRepo: String, expectedTag: String) {
-        val result = parseImageString(input)
-        assertEquals(Triple(expectedRegistry, expectedRepo, expectedTag), result, "Failed for input: $input")
+        val result = ImageParser.parseImageString(input)
+        assertEquals(ImageComponents(expectedRegistry, expectedRepo, expectedTag), result, "Failed for input: $input")
     }
     
     @Test
@@ -654,81 +656,37 @@ class ImageCheckerTest {
     
     @Test
     fun `test parseImageString handles digest correctly`() {
-        val checker = ImageChecker(mockKubernetesClient)
-        val privateParse = ImageChecker::class.java.getDeclaredMethod("parseImageString", String::class.java)
-        privateParse.isAccessible = true
-
         // 1. digest 없는 기본 케이스
-        val (reg1, repo1, tag1) = privateParse.invoke(checker, "nginx:latest") as Triple<*, *, *>
-        assertNull(reg1)
-        assertEquals("nginx", repo1)
-        assertEquals("latest", tag1)
+        val result1 = ImageParser.parseImageString("nginx:latest")
+        assertNull(result1.registry)
+        assertEquals("nginx", result1.repository)
+        assertEquals("latest", result1.tag)
 
         // 2. digest가 붙은 케이스
-        val (reg2, repo2, tag2) = privateParse.invoke(checker, "nginx:latest@sha256:abc") as Triple<*, *, *>
-        assertNull(reg2)
-        assertEquals("nginx", repo2)
-        assertEquals("latest", tag2)
+        val result2 = ImageParser.parseImageString("nginx:latest@sha256:abc")
+        assertNull(result2.registry)
+        assertEquals("nginx", result2.repository)
+        assertEquals("latest", result2.tag)
 
         // 3. registry, tag, digest 모두 있는 케이스
-        val (reg3, repo3, tag3) = privateParse.invoke(checker, "my.registry.com/app:1.2.3@sha256:def") as Triple<*, *, *>
-        assertEquals("my.registry.com", reg3)
-        assertEquals("app", repo3)
-        assertEquals("1.2.3", tag3)
+        val result3 = ImageParser.parseImageString("my.registry.com/app:1.2.3@sha256:def")
+        assertEquals("my.registry.com", result3.registry)
+        assertEquals("app", result3.repository)
+        assertEquals("1.2.3", result3.tag)
 
         // 4. registry만 있는 케이스
-        val (reg4, repo4, tag4) = privateParse.invoke(checker, "my.registry.com/app:latest") as Triple<*, *, *>
-        assertEquals("my.registry.com", reg4)
-        assertEquals("app", repo4)
-        assertEquals("latest", tag4)
+        val result4 = ImageParser.parseImageString("my.registry.com/app:latest")
+        assertEquals("my.registry.com", result4.registry)
+        assertEquals("app", result4.repository)
+        assertEquals("latest", result4.tag)
 
         // 5. digest만 붙은 케이스(tag 생략)
-        val (reg5, repo5, tag5) = privateParse.invoke(checker, "nginx@sha256:abc") as Triple<*, *, *>
-        assertNull(reg5)
-        assertEquals("nginx", repo5)
-        assertEquals("latest", tag5)
+        val result5 = ImageParser.parseImageString("nginx@sha256:abc")
+        assertNull(result5.registry)
+        assertEquals("nginx", result5.repository)
+        assertEquals("latest", result5.tag)
     }
     
-    private fun parseVersion(tag: String): List<Int> {
-        val versionPart = tag.removePrefix("v").split("-").first()
-        return versionPart.split(".").map { it.toIntOrNull() ?: 0 }
-    }
-    
-    private fun compareVersions(v1: List<Int>, v2: List<Int>): Int {
-        val maxLength = maxOf(v1.size, v2.size)
-        for (i in 0 until maxLength) {
-            val part1 = v1.getOrNull(i) ?: 0
-            val part2 = v2.getOrNull(i) ?: 0
-            if (part1 != part2) {
-                return part1.compareTo(part2)
-            }
-        }
-        return 0
-    }
-    
-    private fun isVersionTag(tag: String): Boolean {
-        return tag.matches(Regex("^v?\\d+\\.\\d+(\\.\\d+)?(-.*)?$"))
-    }
-    
-    private fun parseImageString(image: String): Triple<String?, String, String> {
-        val parts = image.split(":")
-        val tag = if (parts.size > 1) parts.last() else "latest"
-        val repoWithRegistry = parts.first()
-        
-        val registryAndRepo = if (repoWithRegistry.contains("/")) {
-            val firstSlash = repoWithRegistry.indexOf("/")
-            val possibleRegistry = repoWithRegistry.substring(0, firstSlash)
-            if (possibleRegistry.contains(".") || possibleRegistry.contains(":") || possibleRegistry == "localhost") {
-                possibleRegistry to repoWithRegistry.substring(firstSlash + 1)
-            } else {
-                null to repoWithRegistry
-            }
-        } else {
-            null to repoWithRegistry
-        }
-        
-        return Triple(registryAndRepo.first, registryAndRepo.second, tag)
-    }
     
     private fun parseStrategy(strategyStr: String): UpdateStrategy {
         return when {

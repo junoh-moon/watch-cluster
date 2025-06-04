@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.watchcluster.model.DockerAuth
 import com.watchcluster.model.ImageUpdateResult
 import com.watchcluster.model.UpdateStrategy
+import com.watchcluster.util.ImageParser
 import io.fabric8.kubernetes.client.KubernetesClient
 import mu.KotlinLogging
 import java.util.Base64
@@ -41,8 +42,8 @@ class ImageChecker(
     }
 
     private fun extractDockerAuth(namespace: String, secretNames: List<String>, image: String): DockerAuth? {
-        val (registry, _, _) = parseImageString(image)
-        val registryUrl = registry ?: "index.docker.io"
+        val components = ImageParser.parseImageString(image)
+        val registryUrl = components.registry ?: "index.docker.io"
         
         for (secretName in secretNames) {
             try {
@@ -82,10 +83,10 @@ class ImageChecker(
     }
     
     private suspend fun checkVersionUpdate(currentImage: String, strategy: UpdateStrategy.Version, dockerAuth: DockerAuth?): ImageUpdateResult {
-        val parts = parseImageString(currentImage)
-        val (registry, repository, tag) = parts
+        val components = ImageParser.parseImageString(currentImage)
+        val (registry, repository, tag) = components
         
-        if (!isVersionTag(tag)) {
+        if (!ImageParser.isVersionTag(tag)) {
             return ImageUpdateResult(
                 hasUpdate = false,
                 currentImage = currentImage,
@@ -93,24 +94,24 @@ class ImageChecker(
             )
         }
         
-        val currentVersion = parseVersion(tag)
+        val currentVersion = ImageParser.parseVersion(tag)
         val availableTags = getAvailableTags(registry, repository, dockerAuth)
         
         val hasVPrefix = tag.startsWith("v")
         val currentMajorVersion = currentVersion.getOrNull(0) ?: 0
         
         val newerVersions = availableTags
-            .filter { isVersionTag(it) }
-            .map { tagString -> tagString to parseVersion(tagString) }
+            .filter { ImageParser.isVersionTag(it) }
+            .map { tagString -> tagString to ImageParser.parseVersion(tagString) }
             .filter { (_, version) -> 
                 if (strategy.lockMajorVersion) {
                     val candidateMajor = version.getOrNull(0) ?: 0
-                    candidateMajor == currentMajorVersion && compareVersions(version, currentVersion) > 0
+                    candidateMajor == currentMajorVersion && ImageParser.compareVersions(version, currentVersion) > 0
                 } else {
-                    compareVersions(version, currentVersion) > 0
+                    ImageParser.compareVersions(version, currentVersion) > 0
                 }
             }
-            .sortedWith { a, b -> compareVersions(b.second, a.second) }
+            .sortedWith { a, b -> ImageParser.compareVersions(b.second, a.second) }
         
         return if (newerVersions.isNotEmpty()) {
             val (originalTag, _) = newerVersions.first()
@@ -121,7 +122,7 @@ class ImageChecker(
             } else {
                 originalTag
             }
-            val newImage = buildImageString(registry, repository, newTag)
+            val newImage = ImageParser.buildImageString(registry, repository, newTag)
             
             // Get digests for version updates
             val currentDigest = try {
@@ -160,11 +161,11 @@ class ImageChecker(
     }
 
     private suspend fun checkLatestUpdate(currentImage: String, dockerAuth: DockerAuth?, namespace: String?, deploymentName: String?): ImageUpdateResult {
-        val parts = parseImageString(currentImage)
-        val (registry, repository, tag) = parts
+        val components = ImageParser.parseImageString(currentImage)
+        val (registry, repository, tag) = components
         
         // Check if this is a version tag - those should use version strategy
-        if (isVersionTag(tag)) {
+        if (ImageParser.isVersionTag(tag)) {
             return ImageUpdateResult(
                 hasUpdate = false,
                 currentImage = currentImage,
@@ -205,68 +206,6 @@ class ImageChecker(
         }
     }
 
-    /**
-     * Docker 이미지 문자열을 registry, repository, tag로 파싱합니다.
-     *
-     * @param image 파싱할 이미지 문자열 (예: "nginx:latest", "my.registry.com/app:1.2.3", "nginx:latest@sha256:abcd...")
-     * @return Triple<registry, repository, tag> (registry는 없을 수 있음)
-     *
-     * 이미지에 digest(@sha256:...)가 붙어 있는 경우에도, digest를 제외한 부분만 파싱하여
-     * registry/repository:tag 형태로 반환합니다.
-     * 예) "nginx:latest@sha256:abcd" -> (null, "nginx", "latest")
-     *     "my.registry.com/app:1.2.3@sha256:abcd" -> ("my.registry.com", "app", "1.2.3")
-     */
-    private fun parseImageString(image: String): Triple<String?, String, String> {
-        val imageWithoutDigest = image.substringBefore("@")
-        val parts = imageWithoutDigest.split(":")
-        val tag = parts.getOrNull(1) ?: "latest"
-        val repoWithRegistry = parts.first()
-        
-        val (registry, repository) = when {
-            !repoWithRegistry.contains("/") -> null to repoWithRegistry
-            else -> {
-                val firstSlash = repoWithRegistry.indexOf("/")
-                val possibleRegistry = repoWithRegistry.substring(0, firstSlash)
-                when {
-                    possibleRegistry.contains(".") || 
-                    possibleRegistry.contains(":") || 
-                    possibleRegistry == "localhost" -> {
-                        possibleRegistry to repoWithRegistry.substring(firstSlash + 1)
-                    }
-                    else -> null to repoWithRegistry
-                }
-            }
-        }
-        
-        return Triple(registry, repository, tag)
-    }
-
-    private fun buildImageString(registry: String?, repository: String, tag: String): String =
-        registry?.let { "$it/$repository:$tag" } ?: "$repository:$tag"
-
-    private fun isVersionTag(tag: String): Boolean =
-        tag.matches(Regex("^v?\\d+\\.\\d+(\\.\\d+)?(-.*)?$"))
-
-    private fun parseVersion(tag: String): List<Int> {
-        val versionPart = tag.removePrefix("v").split("-").first()
-        return versionPart.split(".").map { it.toIntOrNull() ?: 0 }
-    }
-
-    private fun formatVersion(version: List<Int>): String {
-        return version.joinToString(".")
-    }
-
-    private fun compareVersions(v1: List<Int>, v2: List<Int>): Int {
-        val maxLength = maxOf(v1.size, v2.size)
-        for (i in 0 until maxLength) {
-            val part1 = v1.getOrNull(i) ?: 0
-            val part2 = v2.getOrNull(i) ?: 0
-            if (part1 != part2) {
-                return part1.compareTo(part2)
-            }
-        }
-        return 0
-    }
 
     private suspend fun getAvailableTags(registry: String?, repository: String, dockerAuth: DockerAuth?): List<String> {
         return try {
@@ -281,7 +220,7 @@ class ImageChecker(
         return registryClient.getImageDigest(registry, repository, tag, dockerAuth)
     }
 
-    private suspend fun getCurrentImageDigest(image: String, dockerAuth: DockerAuth? = null, namespace: String? = null, deploymentName: String? = null): String? {
+    private suspend fun getCurrentImageDigest(image: String, @Suppress("UNUSED_PARAMETER") dockerAuth: DockerAuth? = null, namespace: String? = null, deploymentName: String? = null): String? {
         return try {
             // If we have deployment info, get the actual running digest from Kubernetes
             if (namespace != null && deploymentName != null) {
