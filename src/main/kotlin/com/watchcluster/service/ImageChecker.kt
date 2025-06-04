@@ -83,22 +83,61 @@ class ImageChecker(
     }
     
     private suspend fun checkVersionUpdate(currentImage: String, strategy: UpdateStrategy.Version, dockerAuth: DockerAuth?): ImageUpdateResult {
-        val components = ImageParser.parseImageString(currentImage)
-        val (registry, repository, tag) = components
-        
-        if (!ImageParser.isVersionTag(tag)) {
-            return ImageUpdateResult(
+        val imageComponents = parseImageForVersionUpdate(currentImage)
+            ?: return createImageUpdateResult(
                 hasUpdate = false,
                 currentImage = currentImage,
                 reason = "Current tag is not a version tag"
             )
+            
+        val versionComparison = findBestVersionMatch(imageComponents, strategy, dockerAuth)
+            ?: return createNoUpdateResult(currentImage, strategy, imageComponents.currentMajorVersion)
+            
+        return createVersionUpdateResult(currentImage, imageComponents, versionComparison, dockerAuth)
+    }
+    
+    private data class ImageVersionComponents(
+        val registry: String?,
+        val repository: String,
+        val tag: String,
+        val currentVersion: List<Int>,
+        val hasVPrefix: Boolean,
+        val currentMajorVersion: Int
+    )
+    
+    private data class VersionComparison(
+        val originalTag: String,
+        val parsedVersion: List<Int>
+    )
+    
+    private suspend fun parseImageForVersionUpdate(currentImage: String): ImageVersionComponents? {
+        val components = ImageParser.parseImageString(currentImage)
+        val (registry, repository, tag) = components
+        
+        if (!ImageParser.isVersionTag(tag)) {
+            return null
         }
         
         val currentVersion = ImageParser.parseVersion(tag)
-        val availableTags = getAvailableTags(registry, repository, dockerAuth)
-        
         val hasVPrefix = tag.startsWith("v")
         val currentMajorVersion = currentVersion.getOrNull(0) ?: 0
+        
+        return ImageVersionComponents(
+            registry = registry,
+            repository = repository,
+            tag = tag,
+            currentVersion = currentVersion,
+            hasVPrefix = hasVPrefix,
+            currentMajorVersion = currentMajorVersion
+        )
+    }
+    
+    private suspend fun findBestVersionMatch(
+        imageComponents: ImageVersionComponents,
+        strategy: UpdateStrategy.Version,
+        dockerAuth: DockerAuth?
+    ): VersionComparison? {
+        val availableTags = getAvailableTags(imageComponents.registry, imageComponents.repository, dockerAuth)
         
         val newerVersions = availableTags
             .filter { ImageParser.isVersionTag(it) }
@@ -106,57 +145,98 @@ class ImageChecker(
             .filter { (_, version) -> 
                 if (strategy.lockMajorVersion) {
                     val candidateMajor = version.getOrNull(0) ?: 0
-                    candidateMajor == currentMajorVersion && ImageParser.compareVersions(version, currentVersion) > 0
+                    candidateMajor == imageComponents.currentMajorVersion && 
+                        ImageParser.compareVersions(version, imageComponents.currentVersion) > 0
                 } else {
-                    ImageParser.compareVersions(version, currentVersion) > 0
+                    ImageParser.compareVersions(version, imageComponents.currentVersion) > 0
                 }
             }
             .sortedWith { a, b -> ImageParser.compareVersions(b.second, a.second) }
-        
+            
         return if (newerVersions.isNotEmpty()) {
-            val (originalTag, _) = newerVersions.first()
-            val newTag = if (hasVPrefix && !originalTag.startsWith("v")) {
-                "v$originalTag"
-            } else if (!hasVPrefix && originalTag.startsWith("v")) {
-                originalTag.removePrefix("v")
-            } else {
-                originalTag
-            }
-            val newImage = ImageParser.buildImageString(registry, repository, newTag)
-            
-            // Get digests for version updates
-            val currentDigest = try {
-                getCurrentImageDigest(currentImage, dockerAuth)
-            } catch (e: Exception) {
-                logger.debug { "Could not get current digest: ${e.message}" }
-                null
-            }
-            val newDigest = try {
-                getImageDigest(registry, repository, newTag, dockerAuth)
-            } catch (e: Exception) {
-                logger.debug { "Could not get new digest: ${e.message}" }
-                null
-            }
-            
-            ImageUpdateResult(
-                hasUpdate = true,
-                currentImage = currentImage,
-                newImage = newImage,
-                reason = "Found newer version: $newTag",
-                currentDigest = currentDigest,
-                newDigest = newDigest
-            )
+            val (originalTag, parsedVersion) = newerVersions.first()
+            VersionComparison(originalTag, parsedVersion)
         } else {
-            val noUpdateReason = if (strategy.lockMajorVersion) {
-                "No newer version available within major version $currentMajorVersion"
-            } else {
-                "No newer version available"
-            }
-            ImageUpdateResult(
-                hasUpdate = false,
-                currentImage = currentImage,
-                reason = noUpdateReason
-            )
+            null
+        }
+    }
+    
+    private suspend fun createVersionUpdateResult(
+        currentImage: String,
+        imageComponents: ImageVersionComponents,
+        versionComparison: VersionComparison,
+        dockerAuth: DockerAuth?
+    ): ImageUpdateResult {
+        val newTag = normalizeVersionTag(versionComparison.originalTag, imageComponents.hasVPrefix)
+        val newImage = ImageParser.buildImageString(imageComponents.registry, imageComponents.repository, newTag)
+        
+        val currentDigest = safeGetCurrentDigest(currentImage, dockerAuth)
+        val newDigest = safeGetImageDigest(imageComponents.registry, imageComponents.repository, newTag, dockerAuth)
+        
+        return ImageUpdateResult(
+            hasUpdate = true,
+            currentImage = currentImage,
+            newImage = newImage,
+            reason = "Found newer version: $newTag",
+            currentDigest = currentDigest,
+            newDigest = newDigest
+        )
+    }
+    
+    private fun normalizeVersionTag(originalTag: String, hasVPrefix: Boolean): String {
+        return when {
+            hasVPrefix && !originalTag.startsWith("v") -> "v$originalTag"
+            !hasVPrefix && originalTag.startsWith("v") -> originalTag.removePrefix("v")
+            else -> originalTag
+        }
+    }
+    
+    private fun createNoUpdateResult(currentImage: String, strategy: UpdateStrategy.Version, currentMajorVersion: Int): ImageUpdateResult {
+        val noUpdateReason = if (strategy.lockMajorVersion) {
+            "No newer version available within major version $currentMajorVersion"
+        } else {
+            "No newer version available"
+        }
+        return createImageUpdateResult(
+            hasUpdate = false,
+            currentImage = currentImage,
+            reason = noUpdateReason
+        )
+    }
+    
+    private fun createImageUpdateResult(
+        hasUpdate: Boolean,
+        currentImage: String,
+        newImage: String? = null,
+        reason: String,
+        currentDigest: String? = null,
+        newDigest: String? = null
+    ): ImageUpdateResult {
+        return ImageUpdateResult(
+            hasUpdate = hasUpdate,
+            currentImage = currentImage,
+            newImage = newImage,
+            reason = reason,
+            currentDigest = currentDigest,
+            newDigest = newDigest
+        )
+    }
+    
+    private suspend fun safeGetCurrentDigest(currentImage: String, dockerAuth: DockerAuth?): String? {
+        return try {
+            getCurrentImageDigest(currentImage, dockerAuth)
+        } catch (e: Exception) {
+            logger.debug { "Could not get current digest: ${e.message}" }
+            null
+        }
+    }
+    
+    private suspend fun safeGetImageDigest(registry: String?, repository: String, tag: String, dockerAuth: DockerAuth?): String? {
+        return try {
+            getImageDigest(registry, repository, tag, dockerAuth)
+        } catch (e: Exception) {
+            logger.debug { "Could not get new digest: ${e.message}" }
+            null
         }
     }
 

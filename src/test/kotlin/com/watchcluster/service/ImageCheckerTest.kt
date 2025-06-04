@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.Arguments
 import org.junit.jupiter.params.provider.MethodSource
+import java.util.Base64
 import java.util.stream.Stream
 import kotlin.test.*
 
@@ -685,6 +686,517 @@ class ImageCheckerTest {
         assertNull(result5.registry)
         assertEquals("nginx", result5.repository)
         assertEquals("latest", result5.tag)
+    }
+    
+    @Test
+    fun `test extractDockerAuth with dockerconfigjson secret`() = runBlocking {
+        // Given
+        val namespace = "default"
+        val secretName = "docker-registry-secret"
+        val registry = "docker.io"
+        val username = "testuser"
+        val password = "testpass"
+        val authString = Base64.getEncoder().encodeToString("$username:$password".toByteArray())
+        
+        val dockerConfigJson = """
+        {
+            "auths": {
+                "docker.io": {
+                    "auth": "$authString"
+                }
+            }
+        }
+        """.trimIndent()
+        
+        val encodedConfig = Base64.getEncoder().encodeToString(dockerConfigJson.toByteArray())
+        
+        coEvery { mockKubernetesClient.secrets() } returns mockk {
+            coEvery { inNamespace(namespace) } returns mockk {
+                coEvery { withName(secretName) } returns mockk {
+                    coEvery { get() } returns mockk {
+                        every { type } returns "kubernetes.io/dockerconfigjson"
+                        every { data } returns mapOf(".dockerconfigjson" to encodedConfig)
+                    }
+                }
+            }
+        }
+        
+        // When
+        val result = imageChecker.checkForUpdate("docker.io/myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
+        
+        // Then
+        verify { mockKubernetesClient.secrets() }
+        // Auth should be extracted and used
+    }
+    
+    @Test
+    fun `test extractDockerAuth with index docker io variations`() = runBlocking {
+        // Given
+        val namespace = "default"
+        val secretName = "docker-registry-secret"
+        val username = "testuser"
+        val password = "testpass"
+        val authString = Base64.getEncoder().encodeToString("$username:$password".toByteArray())
+        
+        val dockerConfigJson = """
+        {
+            "auths": {
+                "https://index.docker.io/v1/": {
+                    "auth": "$authString"
+                }
+            }
+        }
+        """.trimIndent()
+        
+        val encodedConfig = Base64.getEncoder().encodeToString(dockerConfigJson.toByteArray())
+        
+        coEvery { mockKubernetesClient.secrets() } returns mockk {
+            coEvery { inNamespace(namespace) } returns mockk {
+                coEvery { withName(secretName) } returns mockk {
+                    coEvery { get() } returns mockk {
+                        every { type } returns "kubernetes.io/dockerconfigjson"
+                        every { data } returns mapOf(".dockerconfigjson" to encodedConfig)
+                    }
+                }
+            }
+        }
+        
+        coEvery { mockRegistryClient.getTags(null, "myapp", any()) } returns listOf("v1.0.0")
+        
+        // When - image without explicit registry should match index.docker.io variations
+        val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
+        
+        // Then
+        verify { mockKubernetesClient.secrets() }
+        assertFalse(result.hasUpdate)
+    }
+    
+    @Test
+    fun `test extractDockerAuth handles missing secret gracefully`() = runBlocking {
+        // Given
+        val namespace = "default"
+        val secretName = "missing-secret"
+        
+        coEvery { mockKubernetesClient.secrets() } returns mockk {
+            coEvery { inNamespace(namespace) } returns mockk {
+                coEvery { withName(secretName) } returns mockk {
+                    coEvery { get() } returns null
+                }
+            }
+        }
+        
+        coEvery { mockRegistryClient.getTags(null, "myapp", null) } returns listOf("v1.0.0")
+        
+        // When
+        val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
+        
+        // Then
+        verify { mockKubernetesClient.secrets() }
+        assertFalse(result.hasUpdate) // Should continue without auth
+    }
+    
+    @Test
+    fun `test extractDockerAuth handles malformed secret gracefully`() = runBlocking {
+        // Given
+        val namespace = "default"
+        val secretName = "malformed-secret"
+        
+        coEvery { mockKubernetesClient.secrets() } returns mockk {
+            coEvery { inNamespace(namespace) } returns mockk {
+                coEvery { withName(secretName) } returns mockk {
+                    coEvery { get() } returns mockk {
+                        every { type } returns "kubernetes.io/dockerconfigjson"
+                        every { data } returns mapOf(".dockerconfigjson" to "invalid-base64")
+                    }
+                }
+            }
+        }
+        
+        coEvery { mockRegistryClient.getTags(null, "myapp", null) } returns listOf("v1.0.0")
+        
+        // When
+        val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
+        
+        // Then
+        verify { mockKubernetesClient.secrets() }
+        assertFalse(result.hasUpdate) // Should continue without auth
+    }
+    
+    @Test
+    fun `test checkForUpdate handles exception in strategy check`() = runBlocking {
+        // Given
+        val currentImage = "myapp:v1.0.0"
+        
+        coEvery { mockRegistryClient.getTags(any(), any(), any()) } throws RuntimeException("Network error")
+        
+        // When
+        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
+        
+        // Then
+        assertFalse(result.hasUpdate)
+        assertTrue(result.reason?.contains("Error") == true || result.reason?.contains("No newer version available") == true)
+    }
+    
+    @Test
+    fun `test getCurrentImageDigest without Kubernetes info returns null`() = runBlocking {
+        // Given
+        val currentImage = "myapp:latest"
+        
+        coEvery { mockRegistryClient.getImageDigest(null, "myapp", "latest", null) } returns "sha256:abc123"
+        
+        // When - call without namespace/deployment info
+        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, "default", null)
+        
+        // Then - should not detect update since current digest is unknown
+        assertFalse(result.hasUpdate)
+        assertTrue(result.reason?.contains("Already using the latest image") == true)
+    }
+    
+    @Test
+    fun `test getCurrentImageDigest with pod but no imageID`() = runBlocking {
+        // Given
+        val currentImage = "myapp:latest"
+        val namespace = "default"
+        val deploymentName = "myapp"
+        
+        coEvery { mockRegistryClient.getImageDigest(null, "myapp", "latest", null) } returns "sha256:abc123"
+        
+        coEvery { mockKubernetesClient.pods() } returns mockk {
+            coEvery { inNamespace(namespace) } returns mockk {
+                coEvery { withLabel("app", deploymentName) } returns mockk {
+                    coEvery { list() } returns mockk {
+                        every { items } returns listOf(mockk {
+                            every { status } returns mockk {
+                                every { containerStatuses } returns listOf(mockk {
+                                    every { imageID } returns null // No imageID
+                                })
+                            }
+                        })
+                    }
+                }
+            }
+        }
+        
+        // When
+        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
+        
+        // Then
+        assertFalse(result.hasUpdate)
+    }
+    
+    @Test
+    fun `test getCurrentImageDigest with empty pod list`() = runBlocking {
+        // Given
+        val currentImage = "myapp:latest"
+        val namespace = "default"
+        val deploymentName = "myapp"
+        
+        coEvery { mockRegistryClient.getImageDigest(null, "myapp", "latest", null) } returns "sha256:abc123"
+        
+        coEvery { mockKubernetesClient.pods() } returns mockk {
+            coEvery { inNamespace(namespace) } returns mockk {
+                coEvery { withLabel("app", deploymentName) } returns mockk {
+                    coEvery { list() } returns mockk {
+                        every { items } returns emptyList()
+                    }
+                }
+            }
+        }
+        
+        // When
+        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
+        
+        // Then
+        assertFalse(result.hasUpdate)
+    }
+    
+    @Test
+    fun `test version update with multiple secrets tries all`() = runBlocking {
+        // Given
+        val namespace = "default"
+        val secrets = listOf("secret1", "secret2", "secret3")
+        val username = "testuser"
+        val password = "testpass"
+        val authString = Base64.getEncoder().encodeToString("$username:$password".toByteArray())
+        
+        val dockerConfigJson = """
+        {
+            "auths": {
+                "docker.io": {
+                    "auth": "$authString"
+                }
+            }
+        }
+        """.trimIndent()
+        
+        val encodedConfig = Base64.getEncoder().encodeToString(dockerConfigJson.toByteArray())
+        
+        // First two secrets fail, third succeeds
+        coEvery { mockKubernetesClient.secrets() } returns mockk {
+            coEvery { inNamespace(namespace) } returns mockk {
+                coEvery { withName("secret1") } returns mockk {
+                    coEvery { get() } returns null
+                }
+                coEvery { withName("secret2") } returns mockk {
+                    coEvery { get() } returns mockk {
+                        every { type } returns "Opaque" // Wrong type
+                        every { data } returns emptyMap()
+                    }
+                }
+                coEvery { withName("secret3") } returns mockk {
+                    coEvery { get() } returns mockk {
+                        every { type } returns "kubernetes.io/dockerconfigjson"
+                        every { data } returns mapOf(".dockerconfigjson" to encodedConfig)
+                    }
+                }
+            }
+        }
+        
+        coEvery { mockRegistryClient.getTags("docker.io", "myapp", any()) } returns listOf("v1.0.0")
+        
+        // When
+        val result = imageChecker.checkForUpdate("docker.io/myapp:v1.0.0", UpdateStrategy.Version(), namespace, secrets)
+        
+        // Then
+        verify(exactly = 3) { mockKubernetesClient.secrets() }
+        assertFalse(result.hasUpdate)
+    }
+    
+    @Test
+    fun `test getAvailableTags handles registry client exception`() = runBlocking {
+        // Given
+        val currentImage = "myapp:v1.0.0"
+        
+        coEvery { mockRegistryClient.getTags(null, "myapp", null) } throws Exception("Registry unavailable")
+        
+        // When
+        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
+        
+        // Then
+        assertFalse(result.hasUpdate)
+        assertEquals("No newer version available", result.reason)
+    }
+    
+    @Test
+    fun `test checkLatestUpdate with getImageDigest exception`() = runBlocking {
+        // Given
+        val currentImage = "myapp:stable"
+        
+        coEvery { mockRegistryClient.getImageDigest(null, "myapp", "stable", null) } throws Exception("Registry API error")
+        
+        // When
+        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, "default", null)
+        
+        // Then
+        assertFalse(result.hasUpdate)
+        assertTrue(result.reason?.contains("Error checking digest") == true)
+    }
+    
+    @Test
+    fun `test getCurrentImageDigest handles Kubernetes API exception`() = runBlocking {
+        // Given
+        val currentImage = "myapp:latest"
+        val namespace = "default"
+        val deploymentName = "myapp"
+        
+        coEvery { mockRegistryClient.getImageDigest(null, "myapp", "latest", null) } returns "sha256:abc123"
+        
+        coEvery { mockKubernetesClient.pods() } throws Exception("Kubernetes API error")
+        
+        // When
+        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
+        
+        // Then
+        assertFalse(result.hasUpdate)
+    }
+    
+    @Test
+    fun `test extractDockerAuth with empty data in secret`() = runBlocking {
+        // Given
+        val namespace = "default"
+        val secretName = "empty-secret"
+        
+        coEvery { mockKubernetesClient.secrets() } returns mockk {
+            coEvery { inNamespace(namespace) } returns mockk {
+                coEvery { withName(secretName) } returns mockk {
+                    coEvery { get() } returns mockk {
+                        every { type } returns "kubernetes.io/dockerconfigjson"
+                        every { data } returns null // No data
+                    }
+                }
+            }
+        }
+        
+        coEvery { mockRegistryClient.getTags(null, "myapp", null) } returns listOf("v1.0.0")
+        
+        // When
+        val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
+        
+        // Then
+        verify { mockKubernetesClient.secrets() }
+        assertFalse(result.hasUpdate)
+    }
+    
+    @Test
+    fun `test extractDockerAuth with missing dockerconfigjson key`() = runBlocking {
+        // Given
+        val namespace = "default"
+        val secretName = "incomplete-secret"
+        
+        coEvery { mockKubernetesClient.secrets() } returns mockk {
+            coEvery { inNamespace(namespace) } returns mockk {
+                coEvery { withName(secretName) } returns mockk {
+                    coEvery { get() } returns mockk {
+                        every { type } returns "kubernetes.io/dockerconfigjson"
+                        every { data } returns mapOf("other-key" to "value") // Wrong key
+                    }
+                }
+            }
+        }
+        
+        coEvery { mockRegistryClient.getTags(null, "myapp", null) } returns listOf("v1.0.0")
+        
+        // When
+        val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
+        
+        // Then
+        verify { mockKubernetesClient.secrets() }
+        assertFalse(result.hasUpdate)
+    }
+    
+    @Test
+    fun `test extractDockerAuth with malformed auth string`() = runBlocking {
+        // Given
+        val namespace = "default"
+        val secretName = "malformed-auth-secret"
+        
+        val dockerConfigJson = """
+        {
+            "auths": {
+                "docker.io": {
+                    "auth": "notbase64encoded"
+                }
+            }
+        }
+        """.trimIndent()
+        
+        val encodedConfig = Base64.getEncoder().encodeToString(dockerConfigJson.toByteArray())
+        
+        coEvery { mockKubernetesClient.secrets() } returns mockk {
+            coEvery { inNamespace(namespace) } returns mockk {
+                coEvery { withName(secretName) } returns mockk {
+                    coEvery { get() } returns mockk {
+                        every { type } returns "kubernetes.io/dockerconfigjson"
+                        every { data } returns mapOf(".dockerconfigjson" to encodedConfig)
+                    }
+                }
+            }
+        }
+        
+        coEvery { mockRegistryClient.getTags(null, "myapp", null) } returns listOf("v1.0.0")
+        
+        // When
+        val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
+        
+        // Then
+        verify { mockKubernetesClient.secrets() }
+        assertFalse(result.hasUpdate)
+    }
+    
+    @Test
+    fun `test version update with no available tags returns empty list`() = runBlocking {
+        // Given
+        val currentImage = "myapp:v1.0.0"
+        
+        coEvery { mockRegistryClient.getTags(null, "myapp", null) } returns emptyList()
+        
+        // When
+        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
+        
+        // Then
+        assertFalse(result.hasUpdate)
+        assertEquals("No newer version available", result.reason)
+    }
+    
+    @Test
+    fun `test version update with only non-version tags`() = runBlocking {
+        // Given
+        val currentImage = "myapp:v1.0.0"
+        val availableTags = listOf("latest", "stable", "dev", "master") // No version tags
+        
+        coEvery { mockRegistryClient.getTags(null, "myapp", null) } returns availableTags
+        
+        // When
+        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
+        
+        // Then
+        assertFalse(result.hasUpdate)
+        assertEquals("No newer version available", result.reason)
+    }
+    
+    @Test
+    fun `test checkLatestUpdate with null digest from registry`() = runBlocking {
+        // Given
+        val currentImage = "myapp:stable"
+        val namespace = "default"
+        val deploymentName = "myapp"
+        
+        coEvery { mockRegistryClient.getImageDigest(null, "myapp", "stable", null) } returns null
+        
+        coEvery { mockKubernetesClient.pods() } returns mockk {
+            coEvery { inNamespace(namespace) } returns mockk {
+                coEvery { withLabel("app", deploymentName) } returns mockk {
+                    coEvery { list() } returns mockk {
+                        every { items } returns listOf(mockk {
+                            every { status } returns mockk {
+                                every { containerStatuses } returns listOf(mockk {
+                                    every { imageID } returns "docker://myapp@sha256:abc123"
+                                })
+                            }
+                        })
+                    }
+                }
+            }
+        }
+        
+        // When
+        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
+        
+        // Then
+        assertFalse(result.hasUpdate)
+        assertEquals("Already using the latest image", result.reason)
+    }
+    
+    @Test
+    fun `test getCurrentImageDigest with imageID without digest format`() = runBlocking {
+        // Given
+        val currentImage = "myapp:latest"
+        val namespace = "default"
+        val deploymentName = "myapp"
+        
+        coEvery { mockRegistryClient.getImageDigest(null, "myapp", "latest", null) } returns "sha256:abc123"
+        
+        coEvery { mockKubernetesClient.pods() } returns mockk {
+            coEvery { inNamespace(namespace) } returns mockk {
+                coEvery { withLabel("app", deploymentName) } returns mockk {
+                    coEvery { list() } returns mockk {
+                        every { items } returns listOf(mockk {
+                            every { status } returns mockk {
+                                every { containerStatuses } returns listOf(mockk {
+                                    every { imageID } returns "docker://myapp:latest" // No @ digest
+                                })
+                            }
+                        })
+                    }
+                }
+            }
+        }
+        
+        // When
+        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
+        
+        // Then
+        assertFalse(result.hasUpdate)
     }
     
     
