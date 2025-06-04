@@ -33,9 +33,10 @@ class ImageCheckerTest {
         imageChecker = ImageChecker(mockKubernetesClient)
         
         // Use reflection to inject mocked registry client
-        val registryClientField = ImageChecker::class.java.getDeclaredField("registryClient")
-        registryClientField.isAccessible = true
-        registryClientField.set(imageChecker, mockRegistryClient)
+        ImageChecker::class.java.getDeclaredField("registryClient").apply {
+            isAccessible = true
+            set(imageChecker, mockRegistryClient)
+        }
     }
     
     @Test

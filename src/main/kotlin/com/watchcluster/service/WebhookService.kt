@@ -73,16 +73,17 @@ class WebhookService(
     
     private fun calculateRetryDelay(attempt: Int, response: HttpResponse<String>?): Long {
         // Check for 429 status code and Retry-After header
-        if (response?.statusCode() == 429) {
-            val retryAfter = response.headers().firstValue("Retry-After").orElse(null)
-            if (retryAfter != null) {
-                return try {
+        return response?.takeIf { it.statusCode() == 429 }
+            ?.headers()
+            ?.firstValue("Retry-After")
+            ?.orElse(null)
+            ?.let { retryAfter ->
+                try {
                     // Retry-After can be either seconds or HTTP-date
-                    val seconds = retryAfter.toLongOrNull()
-                    if (seconds != null) {
+                    retryAfter.toLongOrNull()?.let { seconds ->
                         logger.debug { "429 Rate Limit: Retry-After header indicates ${seconds} seconds" }
                         seconds * 1000 // Convert to milliseconds
-                    } else {
+                    } ?: run {
                         // If it's not a number, it might be an HTTP-date
                         // For simplicity, we'll use exponential backoff in this case
                         logger.debug { "429 Rate Limit: Retry-After header is not numeric, using exponential backoff" }
@@ -92,11 +93,10 @@ class WebhookService(
                     logger.warn(e) { "Failed to parse Retry-After header: $retryAfter" }
                     1000L * (attempt + 1)
                 }
+            } ?: run {
+                // Default exponential backoff
+                1000L * (attempt + 1)
             }
-        }
-        
-        // Default exponential backoff
-        return 1000L * (attempt + 1)
     }
     
     private fun sendHttpRequest(url: String, event: WebhookEvent): HttpResponse<String> {

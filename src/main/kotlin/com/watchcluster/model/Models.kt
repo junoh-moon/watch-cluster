@@ -13,11 +13,29 @@ data class WatchedDeployment(
 )
 
 sealed class UpdateStrategy {
+    abstract val displayName: String
+    
     data class Version(
         val pattern: String = "semver",
         val lockMajorVersion: Boolean = false
-    ) : UpdateStrategy()
-    object Latest : UpdateStrategy()
+    ) : UpdateStrategy() {
+        override val displayName: String = if (lockMajorVersion) "version-lock-major" else "version"
+    }
+    
+    object Latest : UpdateStrategy() {
+        override val displayName: String = "latest"
+    }
+    
+    companion object {
+        fun fromString(value: String): UpdateStrategy {
+            return when (value.lowercase()) {
+                "latest" -> Latest
+                "version-lock-major" -> Version(lockMajorVersion = true)
+                "version", "semver" -> Version()
+                else -> Version() // default
+            }
+        }
+    }
 }
 
 data class ImageUpdateResult(
@@ -46,17 +64,16 @@ data class WebhookConfig(
 ) {
     companion object {
         fun fromEnvironment(): WebhookConfig {
-            val headers = System.getenv("WEBHOOK_HEADERS")?.let { headersStr ->
-                headersStr.split(",")
-                    .filter { it.isNotBlank() }
-                    .mapNotNull { header ->
-                        val parts = header.split("=", limit = 2)
-                        if (parts.size == 2) {
-                            parts[0].trim() to parts[1].trim()
-                        } else null
-                    }
-                    .toMap()
-            } ?: emptyMap()
+            val headers = System.getenv("WEBHOOK_HEADERS")
+                ?.split(",")
+                ?.filter { it.isNotBlank() }
+                ?.mapNotNull { header ->
+                    header.split("=", limit = 2)
+                        .takeIf { it.size == 2 }
+                        ?.let { (key, value) -> key.trim() to value.trim() }
+                }
+                ?.toMap()
+                ?: emptyMap()
             
             return WebhookConfig(
                 url = System.getenv("WEBHOOK_URL"),
@@ -92,21 +109,12 @@ enum class WebhookEventType {
     IMAGE_ROLLOUT_FAILED
 }
 
-enum class UpdateStrategyType(val value: String) {
-    VERSION("version"),
-    LATEST("latest"),
-    VERSION_LOCK_MAJOR("version-lock-major");
-    
-    companion object {
-        fun fromString(value: String): UpdateStrategyType {
-            return values().find { it.value.equals(value, ignoreCase = true) }
-                ?: VERSION
-        }
-    }
-}
+// UpdateStrategyType enum removed - use UpdateStrategy sealed class directly
 
-object Annotations {
+object WatchClusterAnnotations {
     const val ENABLED = "watch-cluster.io/enabled"
     const val CRON = "watch-cluster.io/cron"
     const val STRATEGY = "watch-cluster.io/strategy"
+    const val VERSION_PATTERN = "watch-cluster.io/version-pattern"
+    const val LOCK_MAJOR_VERSION = "watch-cluster.io/lock-major-version"
 }

@@ -31,9 +31,7 @@ fun main() = runBlocking {
         logger.info { "  - Image Rollout Completed: ${webhookConfig.enableImageRolloutCompleted}" }
         logger.info { "  - Image Rollout Failed: ${webhookConfig.enableImageRolloutFailed}" }
         logger.info {
-            val headers = webhookConfig.headers.entries.takeIf { it.isNotEmpty() }?.joinToString(", ")
-                            ?: "None"
-            "Webhook Headers: ${headers}"
+            "Webhook Headers: ${webhookConfig.headers.entries.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "None"}"
         }
 
         val kubernetesClient = KubernetesClientBuilder().build()
@@ -43,21 +41,19 @@ fun main() = runBlocking {
 
         // Get current pod information
         if (podName != "unknown" && podNamespace != "unknown") {
-            try {
-                val pod = kubernetesClient.pods()
+            runCatching {
+                kubernetesClient.pods()
                     .inNamespace(podNamespace)
                     .withName(podName)
                     .get()
-
-                if (pod != null) {
-                    val containerStatuses = pod.status?.containerStatuses ?: emptyList()
-                    containerStatuses.forEach { containerStatus ->
+                    ?.status
+                    ?.containerStatuses
+                    ?.forEach { containerStatus ->
                         logger.info { "Container: ${containerStatus.name}" }
                         logger.info { "  Image: ${containerStatus.image}" }
                         logger.info { "  Image ID: ${containerStatus.imageID}" }
                     }
-                }
-            } catch (e: Exception) {
+            }.onFailure { e ->
                 logger.warn { "Failed to get pod information: ${e.message}" }
             }
         }

@@ -50,7 +50,7 @@ class WatchController(
 
     private fun handleDeployment(deployment: Deployment) {
         val annotations = deployment.metadata.annotations ?: return
-        val enabled = annotations[Annotations.ENABLED]?.toBoolean() ?: false
+        val enabled = annotations[WatchClusterAnnotations.ENABLED]?.toBoolean() ?: false
         
         if (!enabled) return
         
@@ -58,8 +58,9 @@ class WatchController(
         val name = deployment.metadata.name
         val key = "$namespace/$name"
         
-        val cronExpression = annotations[Annotations.CRON] ?: "0 */5 * * * ?"
-        val strategy = parseStrategy(annotations[Annotations.STRATEGY] ?: UpdateStrategyType.VERSION.value)
+        val cronExpression = annotations[WatchClusterAnnotations.CRON] ?: "0 */5 * * * ?"
+        val strategyStr = annotations[WatchClusterAnnotations.STRATEGY] ?: "version"
+        val strategy = UpdateStrategy.fromString(strategyStr)
         
         val containers = deployment.spec.template.spec.containers
         if (containers.isEmpty()) return
@@ -92,7 +93,7 @@ class WatchController(
                 deployment = DeploymentInfo(namespace, name, currentImage),
                 details = mapOf(
                     "cronExpression" to cronExpression,
-                    "updateStrategy" to strategy.toString()
+                    "updateStrategy" to strategy.displayName
                 )
             ))
         }
@@ -100,13 +101,7 @@ class WatchController(
         logger.info { "Watching deployment: $key with cron: $cronExpression and strategy: $strategy" }
     }
 
-    private fun parseStrategy(strategyStr: String): UpdateStrategy {
-        return when (UpdateStrategyType.fromString(strategyStr)) {
-            UpdateStrategyType.LATEST -> UpdateStrategy.Latest
-            UpdateStrategyType.VERSION_LOCK_MAJOR -> UpdateStrategy.Version(lockMajorVersion = true)
-            UpdateStrategyType.VERSION -> UpdateStrategy.Version()
-        }
-    }
+    // parseStrategy method removed - using UpdateStrategy.fromString() directly
 
     private suspend fun checkAndUpdateDeployment(deployment: WatchedDeployment) {
         try {
@@ -120,24 +115,29 @@ class WatchController(
                 deployment.name
             )
             
-            if (updateResult.hasUpdate) {
-                logger.info {
-					listOf(
-						"Found update for ${deployment.namespace}/${deployment.name}: ${updateResult.newImage}",
-						updateResult.reason
-					).joinToString(" ")
-				}
-                deploymentUpdater.updateDeployment(
-                    deployment.namespace,
-                    deployment.name,
-                    updateResult.newImage!!,
-                    updateResult
-                )
-            } else {
-                logger.debug {
-					"No update available for ${deployment.namespace}/${deployment.name}."
-					" ${updateResult.reason}"
-				}
+            when {
+                updateResult.hasUpdate -> {
+                    logger.info {
+                        buildString {
+                            append("Found update for ${deployment.namespace}/${deployment.name}: ${updateResult.newImage}")
+                            updateResult.reason?.let { append(" $it") }
+                        }
+                    }
+                    deploymentUpdater.updateDeployment(
+                        deployment.namespace,
+                        deployment.name,
+                        updateResult.newImage!!,
+                        updateResult
+                    )
+                }
+                else -> {
+                    logger.debug {
+                        buildString {
+                            append("No update available for ${deployment.namespace}/${deployment.name}.")
+                            updateResult.reason?.let { append(" $it") }
+                        }
+                    }
+                }
             }
         } catch (e: Exception) {
             logger.error(e) {"Error checking deployment ${deployment.namespace}/${deployment.name}" }

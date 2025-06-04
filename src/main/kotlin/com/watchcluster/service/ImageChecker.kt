@@ -219,35 +219,33 @@ class ImageChecker(
     private fun parseImageString(image: String): Triple<String?, String, String> {
         val imageWithoutDigest = image.substringBefore("@")
         val parts = imageWithoutDigest.split(":")
-        val tag = if (parts.size > 1) parts.last() else "latest"
+        val tag = parts.getOrNull(1) ?: "latest"
         val repoWithRegistry = parts.first()
         
-        val registryAndRepo = if (repoWithRegistry.contains("/")) {
-            val firstSlash = repoWithRegistry.indexOf("/")
-            val possibleRegistry = repoWithRegistry.substring(0, firstSlash)
-            if (possibleRegistry.contains(".") || possibleRegistry.contains(":") || possibleRegistry == "localhost") {
-                possibleRegistry to repoWithRegistry.substring(firstSlash + 1)
-            } else {
-                null to repoWithRegistry
+        val (registry, repository) = when {
+            !repoWithRegistry.contains("/") -> null to repoWithRegistry
+            else -> {
+                val firstSlash = repoWithRegistry.indexOf("/")
+                val possibleRegistry = repoWithRegistry.substring(0, firstSlash)
+                when {
+                    possibleRegistry.contains(".") || 
+                    possibleRegistry.contains(":") || 
+                    possibleRegistry == "localhost" -> {
+                        possibleRegistry to repoWithRegistry.substring(firstSlash + 1)
+                    }
+                    else -> null to repoWithRegistry
+                }
             }
-        } else {
-            null to repoWithRegistry
         }
         
-        return Triple(registryAndRepo.first, registryAndRepo.second, tag)
+        return Triple(registry, repository, tag)
     }
 
-    private fun buildImageString(registry: String?, repository: String, tag: String): String {
-        return if (registry != null) {
-            "$registry/$repository:$tag"
-        } else {
-            "$repository:$tag"
-        }
-    }
+    private fun buildImageString(registry: String?, repository: String, tag: String): String =
+        registry?.let { "$it/$repository:$tag" } ?: "$repository:$tag"
 
-    private fun isVersionTag(tag: String): Boolean {
-        return tag.matches(Regex("^v?\\d+\\.\\d+(\\.\\d+)?(-.*)?$"))
-    }
+    private fun isVersionTag(tag: String): Boolean =
+        tag.matches(Regex("^v?\\d+\\.\\d+(\\.\\d+)?(-.*)?$"))
 
     private fun parseVersion(tag: String): List<Int> {
         val versionPart = tag.removePrefix("v").split("-").first()
