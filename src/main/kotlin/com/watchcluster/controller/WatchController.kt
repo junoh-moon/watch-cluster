@@ -11,6 +11,7 @@ import io.fabric8.kubernetes.client.informers.ResourceEventHandler
 import kotlinx.coroutines.*
 import mu.KotlinLogging
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.coroutineContext
 
 private val logger = KotlinLogging.logger {}
 
@@ -23,20 +24,25 @@ class WatchController(
     private val deploymentUpdater = DeploymentUpdater(kubernetesClient, webhookService)
     private val cronScheduler = CronScheduler()
     private val watchedDeployments = ConcurrentHashMap<String, WatchedDeployment>()
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
-    fun start() {
+    suspend fun start() {
         logger.info { "Starting deployment watcher..." }
+        
+        val currentScope = CoroutineScope(coroutineContext)
         
         kubernetesClient.apps().deployments()
             .inAnyNamespace()
             .inform(object : ResourceEventHandler<Deployment> {
                 override fun onAdd(deployment: Deployment) {
-                    handleDeployment(deployment)
+                    currentScope.async {
+                        handleDeployment(deployment)
+                    }
                 }
 
                 override fun onUpdate(oldDeployment: Deployment, newDeployment: Deployment) {
-                    handleDeployment(newDeployment)
+                    currentScope.async {
+                        handleDeployment(newDeployment)
+                    }
                 }
 
                 override fun onDelete(deployment: Deployment, deletedFinalStateUnknown: Boolean) {
@@ -48,12 +54,13 @@ class WatchController(
             })
     }
 
-    private fun handleDeployment(deployment: Deployment) {
+    private suspend fun handleDeployment(deployment: Deployment) {
         val annotations = deployment.metadata.annotations ?: return
         val enabled = annotations[WatchClusterAnnotations.ENABLED]?.toBoolean() ?: false
         
         if (!enabled) return
         
+        val currentScope = CoroutineScope(coroutineContext)
         val namespace = deployment.metadata.namespace
         val name = deployment.metadata.name
         val key = "$namespace/$name"
@@ -81,12 +88,12 @@ class WatchController(
         watchedDeployments[key] = watchedDeployment
         
         cronScheduler.scheduleJob(key, cronExpression) {
-            scope.launch {
+            currentScope.async {
                 checkAndUpdateDeployment(watchedDeployment)
             }
         }
         
-        scope.launch {
+        currentScope.async {
             webhookService.sendWebhook(WebhookEvent(
                 eventType = WebhookEventType.DEPLOYMENT_DETECTED,
                 timestamp = java.time.Instant.now().toString(),
@@ -146,6 +153,5 @@ class WatchController(
 
     fun stop() {
         cronScheduler.shutdown()
-        scope.cancel()
     }
 }

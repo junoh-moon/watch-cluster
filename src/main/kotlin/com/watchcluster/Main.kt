@@ -3,12 +3,15 @@ package com.watchcluster
 import com.watchcluster.controller.WatchController
 import com.watchcluster.model.WebhookConfig
 import io.fabric8.kubernetes.client.KubernetesClientBuilder
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.*
 import mu.KotlinLogging
 
 private val logger = KotlinLogging.logger {}
 
-fun main() = runBlocking {
+@OptIn(ExperimentalCoroutinesApi::class)
+fun main() {
+    newSingleThreadContext("WatchClusterThread").use { singleThreadContext ->
+        runBlocking(singleThreadContext) {
     logger.info { "Starting watch-cluster..." }
 
     try {
@@ -42,11 +45,12 @@ fun main() = runBlocking {
         // Get current pod information
         if (podName != "unknown" && podNamespace != "unknown") {
             runCatching {
-                kubernetesClient.pods()
-                    .inNamespace(podNamespace)
-                    .withName(podName)
-                    .get()
-                    ?.status
+                withContext(Dispatchers.IO) {
+                    kubernetesClient.pods()
+                        .inNamespace(podNamespace)
+                        .withName(podName)
+                        .get()
+                }?.status
                     ?.containerStatuses
                     ?.forEach { containerStatus ->
                         logger.info { "Container: ${containerStatus.name}" }
@@ -60,10 +64,12 @@ fun main() = runBlocking {
 
         logger.info { "==================================" }
 
-        val controller = WatchController(kubernetesClient)
-        controller.start()
-    } catch (e: Exception) {
-        logger.error(e) { "Failed to start watch-cluster" }
-        throw e
+            val controller = WatchController(kubernetesClient)
+            controller.start()
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to start watch-cluster" }
+            throw e
+        }
+        }
     }
 }

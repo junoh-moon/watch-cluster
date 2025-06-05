@@ -15,6 +15,9 @@ import java.net.http.HttpResponse
 import java.net.http.HttpHeaders
 import java.time.Instant
 import java.util.*
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -51,7 +54,11 @@ class WebhookServiceTest {
         
         every { mockHttpResponse.statusCode() } returns 200
         every { mockHttpResponse.body() } returns """{"status": "ok"}"""
-        every { mockHttpClient.send(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) } returns mockHttpResponse
+        every { mockHttpClient.sendAsync(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) } returns 
+            CompletableFuture.supplyAsync {
+                Thread.sleep(25) // 25ms delay to simulate network latency
+                mockHttpResponse
+            }
         
         val event = WebhookEvent(
             eventType = WebhookEventType.DEPLOYMENT_DETECTED,
@@ -65,7 +72,7 @@ class WebhookServiceTest {
         
         webhookService.sendWebhook(event)
         
-        verify(exactly = 1) { mockHttpClient.send(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) }
+        verify(exactly = 1) { mockHttpClient.sendAsync(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) }
     }
     
     @Test
@@ -88,7 +95,7 @@ class WebhookServiceTest {
         
         webhookService.sendWebhook(event)
         
-        verify(exactly = 0) { mockHttpClient.send(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) }
+        verify(exactly = 0) { mockHttpClient.sendAsync(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) }
     }
     
     @Test
@@ -112,7 +119,7 @@ class WebhookServiceTest {
         
         webhookService.sendWebhook(event)
         
-        verify(exactly = 0) { mockHttpClient.send(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) }
+        verify(exactly = 0) { mockHttpClient.sendAsync(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) }
     }
     
     @Test
@@ -125,18 +132,21 @@ class WebhookServiceTest {
         webhookService = WebhookService(config)
         
         var callCount = 0
-        every { mockHttpClient.send(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) } answers {
+        every { mockHttpClient.sendAsync(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) } answers {
             callCount++
-            when (callCount) {
-                1, 2 -> {
-                    every { mockHttpResponse.statusCode() } returns 500
-                    every { mockHttpResponse.body() } returns "Server Error"
-                    mockHttpResponse
-                }
-                else -> {
-                    every { mockHttpResponse.statusCode() } returns 200
-                    every { mockHttpResponse.body() } returns """{"status": "ok"}"""
-                    mockHttpResponse
+            CompletableFuture.supplyAsync {
+                Thread.sleep(30) // 30ms delay to simulate network latency
+                when (callCount) {
+                    1, 2 -> {
+                        every { mockHttpResponse.statusCode() } returns 500
+                        every { mockHttpResponse.body() } returns "Server Error"
+                        mockHttpResponse
+                    }
+                    else -> {
+                        every { mockHttpResponse.statusCode() } returns 200
+                        every { mockHttpResponse.body() } returns """{"status": "ok"}"""
+                        mockHttpResponse
+                    }
                 }
             }
         }
@@ -153,7 +163,7 @@ class WebhookServiceTest {
         
         webhookService.sendWebhook(event)
         
-        verify(exactly = 3) { mockHttpClient.send(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) }
+        verify(exactly = 3) { mockHttpClient.sendAsync(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) }
     }
     
     @Test
@@ -165,7 +175,11 @@ class WebhookServiceTest {
         )
         webhookService = WebhookService(config)
         
-        every { mockHttpClient.send(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) } throws RuntimeException("Network error")
+        every { mockHttpClient.sendAsync(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) } returns 
+            CompletableFuture.supplyAsync {
+                Thread.sleep(40) // 40ms delay to simulate network latency
+                throw RuntimeException("Network error")
+            }
         
         val event = WebhookEvent(
             eventType = WebhookEventType.IMAGE_ROLLOUT_COMPLETED,
@@ -180,7 +194,7 @@ class WebhookServiceTest {
         
         webhookService.sendWebhook(event)
         
-        verify(exactly = 3) { mockHttpClient.send(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) }
+        verify(exactly = 3) { mockHttpClient.sendAsync(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) }
     }
     
     @Test
@@ -199,7 +213,11 @@ class WebhookServiceTest {
         every { mockHttpResponse.body() } returns """{"status": "ok"}"""
         
         val capturedRequest = slot<HttpRequest>()
-        every { mockHttpClient.send(capture(capturedRequest), any<HttpResponse.BodyHandler<String>>()) } returns mockHttpResponse
+        every { mockHttpClient.sendAsync(capture(capturedRequest), any<HttpResponse.BodyHandler<String>>()) } returns 
+            CompletableFuture.supplyAsync {
+                Thread.sleep(20) // 20ms delay to simulate network latency
+                mockHttpResponse
+            }
         
         val event = WebhookEvent(
             eventType = WebhookEventType.IMAGE_ROLLOUT_STARTED,
@@ -213,7 +231,7 @@ class WebhookServiceTest {
         
         webhookService.sendWebhook(event)
         
-        verify(exactly = 1) { mockHttpClient.send(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) }
+        verify(exactly = 1) { mockHttpClient.sendAsync(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) }
         
         val request = capturedRequest.captured
         assertTrue(request.headers().firstValue("Content-Type").isPresent)
@@ -233,19 +251,22 @@ class WebhookServiceTest {
         every { mockHeaders.firstValue("Retry-After") } returns Optional.of("5") // 5 seconds
         
         var callCount = 0
-        every { mockHttpClient.send(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) } answers {
+        every { mockHttpClient.sendAsync(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) } answers {
             callCount++
-            when (callCount) {
-                1 -> {
-                    every { mockHttpResponse.statusCode() } returns 429
-                    every { mockHttpResponse.body() } returns "Rate limit exceeded"
-                    every { mockHttpResponse.headers() } returns mockHeaders
-                    mockHttpResponse
-                }
-                else -> {
-                    every { mockHttpResponse.statusCode() } returns 200
-                    every { mockHttpResponse.body() } returns """{"status": "ok"}"""
-                    mockHttpResponse
+            CompletableFuture.supplyAsync {
+                Thread.sleep(15) // 15ms delay to simulate network latency
+                when (callCount) {
+                    1 -> {
+                        every { mockHttpResponse.statusCode() } returns 429
+                        every { mockHttpResponse.body() } returns "Rate limit exceeded"
+                        every { mockHttpResponse.headers() } returns mockHeaders
+                        mockHttpResponse
+                    }
+                    else -> {
+                        every { mockHttpResponse.statusCode() } returns 200
+                        every { mockHttpResponse.body() } returns """{"status": "ok"}"""
+                        mockHttpResponse
+                    }
                 }
             }
         }
@@ -266,7 +287,7 @@ class WebhookServiceTest {
         
         // Should wait at least 5 seconds (5000ms) as specified in Retry-After header
         assertTrue(elapsedTime >= 5000, "Should have waited at least 5 seconds for Retry-After")
-        verify(exactly = 2) { mockHttpClient.send(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) }
+        verify(exactly = 2) { mockHttpClient.sendAsync(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) }
     }
     
     @Test
@@ -282,19 +303,22 @@ class WebhookServiceTest {
         every { mockHeaders.firstValue("Retry-After") } returns Optional.empty()
         
         var callCount = 0
-        every { mockHttpClient.send(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) } answers {
+        every { mockHttpClient.sendAsync(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) } answers {
             callCount++
-            when (callCount) {
-                1 -> {
-                    every { mockHttpResponse.statusCode() } returns 429
-                    every { mockHttpResponse.body() } returns "Rate limit exceeded"
-                    every { mockHttpResponse.headers() } returns mockHeaders
-                    mockHttpResponse
-                }
-                else -> {
-                    every { mockHttpResponse.statusCode() } returns 200
-                    every { mockHttpResponse.body() } returns """{"status": "ok"}"""
-                    mockHttpResponse
+            CompletableFuture.supplyAsync {
+                Thread.sleep(45) // 45ms delay to simulate network latency
+                when (callCount) {
+                    1 -> {
+                        every { mockHttpResponse.statusCode() } returns 429
+                        every { mockHttpResponse.body() } returns "Rate limit exceeded"
+                        every { mockHttpResponse.headers() } returns mockHeaders
+                        mockHttpResponse
+                    }
+                    else -> {
+                        every { mockHttpResponse.statusCode() } returns 200
+                        every { mockHttpResponse.body() } returns """{"status": "ok"}"""
+                        mockHttpResponse
+                    }
                 }
             }
         }
@@ -316,6 +340,6 @@ class WebhookServiceTest {
         // Should use exponential backoff (1 second for first retry)
         assertTrue(elapsedTime >= 1000, "Should have waited at least 1 second with exponential backoff")
         assertTrue(elapsedTime < 3000, "Should not have waited more than 3 seconds")
-        verify(exactly = 2) { mockHttpClient.send(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) }
+        verify(exactly = 2) { mockHttpClient.sendAsync(any<HttpRequest>(), any<HttpResponse.BodyHandler<String>>()) }
     }
 }

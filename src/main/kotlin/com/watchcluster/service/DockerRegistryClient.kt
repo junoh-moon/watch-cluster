@@ -5,14 +5,33 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.watchcluster.model.DockerAuth
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import mu.KotlinLogging
-import okhttp3.Credentials
-import okhttp3.OkHttpClient
-import okhttp3.Request
+import okhttp3.*
+import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 private val logger = KotlinLogging.logger {}
+
+// Extension function to make OkHttp async
+suspend fun Call.await(): Response = suspendCancellableCoroutine { continuation ->
+    enqueue(object : Callback {
+        override fun onResponse(call: Call, response: Response) {
+            continuation.resume(response)
+        }
+
+        override fun onFailure(call: Call, e: IOException) {
+            continuation.resumeWithException(e)
+        }
+    })
+    
+    continuation.invokeOnCancellation {
+        cancel()
+    }
+}
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class DockerHubTagsResponse(
@@ -86,7 +105,7 @@ class DockerRegistryClient {
         }
     }
     
-    private fun getDockerHubTags(repository: String, dockerAuth: DockerAuth?): List<String> {
+    private suspend fun getDockerHubTags(repository: String, dockerAuth: DockerAuth?): List<String> {
         val namespace = if (repository.contains("/")) repository else "library/$repository"
         val url = "https://hub.docker.com/v2/repositories/$namespace/tags/?page_size=100"
         
@@ -100,7 +119,7 @@ class DockerRegistryClient {
         
         val request = requestBuilder.build()
         
-        client.newCall(request).execute().use { response ->
+        client.newCall(request).await().use { response ->
             if (!response.isSuccessful) {
                 logger.warn { "Failed to fetch tags from Docker Hub: ${response.code}" }
                 return emptyList()
@@ -112,7 +131,7 @@ class DockerRegistryClient {
         }
     }
     
-    private fun getGitHubContainerRegistryTags(repository: String, dockerAuth: DockerAuth?): List<String> {
+    private suspend fun getGitHubContainerRegistryTags(repository: String, dockerAuth: DockerAuth?): List<String> {
         val url = "https://ghcr.io/v2/$repository/tags/list"
         
         val requestBuilder = Request.Builder()
@@ -125,7 +144,7 @@ class DockerRegistryClient {
         
         val request = requestBuilder.build()
         
-        client.newCall(request).execute().use { response ->
+        client.newCall(request).await().use { response ->
             if (!response.isSuccessful) {
                 logger.warn { "Failed to fetch tags from GitHub Container Registry: ${response.code}" }
                 return emptyList()
@@ -137,7 +156,7 @@ class DockerRegistryClient {
         }
     }
     
-    private fun getGenericRegistryTags(registry: String, repository: String, dockerAuth: DockerAuth?): List<String> {
+    private suspend fun getGenericRegistryTags(registry: String, repository: String, dockerAuth: DockerAuth?): List<String> {
         val url = "https://$registry/v2/$repository/tags/list"
         
         val requestBuilder = Request.Builder()
@@ -150,7 +169,7 @@ class DockerRegistryClient {
         
         val request = requestBuilder.build()
         
-        client.newCall(request).execute().use { response ->
+        client.newCall(request).await().use { response ->
             if (!response.isSuccessful) {
                 logger.warn { "Failed to fetch tags from $registry: ${response.code}" }
                 return emptyList()
@@ -162,7 +181,7 @@ class DockerRegistryClient {
         }
     }
     
-    private fun getDockerHubDigest(repository: String, tag: String, dockerAuth: DockerAuth?): String? {
+    private suspend fun getDockerHubDigest(repository: String, tag: String, dockerAuth: DockerAuth?): String? {
         val namespace = if (repository.contains("/")) repository else "library/$repository"
         val url = "https://hub.docker.com/v2/repositories/$namespace/tags/$tag/"
         logger.debug { "Fetching Docker Hub digest from: $url" }
@@ -177,7 +196,7 @@ class DockerRegistryClient {
         
         val request = requestBuilder.build()
         
-        client.newCall(request).execute().use { response ->
+        client.newCall(request).await().use { response ->
             logger.debug { "Docker Hub response code: ${response.code}" }
             if (!response.isSuccessful) {
                 logger.warn { "Failed to fetch digest from Docker Hub: ${response.code}" }
@@ -193,7 +212,7 @@ class DockerRegistryClient {
         }
     }
     
-    private fun getGitHubContainerRegistryDigest(repository: String, tag: String, dockerAuth: DockerAuth?): String? {
+    private suspend fun getGitHubContainerRegistryDigest(repository: String, tag: String, dockerAuth: DockerAuth?): String? {
         // Get token (anonymous for public repos if no auth provided)
         val token = when {
             dockerAuth != null -> dockerAuth.password
@@ -225,7 +244,7 @@ class DockerRegistryClient {
         
         val request = requestBuilder.build()
         
-        client.newCall(request).execute().use { response ->
+        client.newCall(request).await().use { response ->
             logger.debug { "GitHub Container Registry response code: ${response.code}" }
             if (!response.isSuccessful) {
                 logger.warn { "Failed to fetch manifest from GitHub Container Registry: ${response.code}" }
@@ -239,7 +258,7 @@ class DockerRegistryClient {
         }
     }
     
-    private fun getAnonymousTokenForGHCR(repository: String): String? {
+    private suspend fun getAnonymousTokenForGHCR(repository: String): String? {
         val tokenUrl = "https://ghcr.io/token?scope=repository:$repository:pull"
         logger.debug { "Fetching anonymous token for repository: $repository" }
         
@@ -249,7 +268,7 @@ class DockerRegistryClient {
             .build()
         
         return try {
-            client.newCall(request).execute().use { response ->
+            client.newCall(request).await().use { response ->
                 if (!response.isSuccessful) {
                     logger.warn { "Failed to fetch anonymous token: ${response.code}" }
                     return null
@@ -267,7 +286,7 @@ class DockerRegistryClient {
         }
     }
     
-    private fun getGenericRegistryDigest(registry: String, repository: String, tag: String, dockerAuth: DockerAuth?): String? {
+    private suspend fun getGenericRegistryDigest(registry: String, repository: String, tag: String, dockerAuth: DockerAuth?): String? {
         val url = "https://$registry/v2/$repository/manifests/$tag"
         logger.debug { "Fetching generic registry digest from: $url" }
         
@@ -282,7 +301,7 @@ class DockerRegistryClient {
         
         val request = requestBuilder.build()
         
-        client.newCall(request).execute().use { response ->
+        client.newCall(request).await().use { response ->
             logger.debug { "Generic registry response code: ${response.code}" }
             if (!response.isSuccessful) {
                 logger.warn { "Failed to fetch manifest from $registry: ${response.code}" }

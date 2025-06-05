@@ -14,6 +14,7 @@ import io.fabric8.kubernetes.client.dsl.RollableScalableResource
 import io.fabric8.kubernetes.api.model.apps.DeploymentList
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.*

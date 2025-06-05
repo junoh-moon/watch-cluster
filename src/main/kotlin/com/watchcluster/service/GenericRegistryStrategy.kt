@@ -34,7 +34,7 @@ class GenericRegistryStrategy(private val registry: String) : BaseRegistryStrate
             
             val request = requestBuilder.build()
             
-            client.newCall(request).execute().use { response ->
+            client.newCall(request).await().use { response ->
                 if (!response.isSuccessful) {
                     logger.warn { "Failed to fetch tags from $registry: ${response.code}" }
                     return@withContext emptyList()
@@ -66,7 +66,7 @@ class GenericRegistryStrategy(private val registry: String) : BaseRegistryStrate
             
             val request = requestBuilder.build()
             
-            client.newCall(request).execute().use { response ->
+            client.newCall(request).await().use { response ->
                 logger.debug { "Generic registry response code: ${response.code}" }
                 if (!response.isSuccessful) {
                     logger.warn { "Failed to fetch manifest from $registry: ${response.code}" }

@@ -36,7 +36,7 @@ class GHCRStrategy : BaseRegistryStrategy() {
             
             val request = requestBuilder.build()
             
-            client.newCall(request).execute().use { response ->
+            client.newCall(request).await().use { response ->
                 if (!response.isSuccessful) {
                     logger.warn { "Failed to fetch tags from GitHub Container Registry: ${response.code}" }
                     return@withContext emptyList()
@@ -85,7 +85,7 @@ class GHCRStrategy : BaseRegistryStrategy() {
             
             val request = requestBuilder.build()
             
-            client.newCall(request).execute().use { response ->
+            client.newCall(request).await().use { response ->
                 logger.debug { "GitHub Container Registry response code: ${response.code}" }
                 if (!response.isSuccessful) {
                     logger.warn { "Failed to fetch manifest from GitHub Container Registry: ${response.code}" }
@@ -103,7 +103,7 @@ class GHCRStrategy : BaseRegistryStrategy() {
         }
     }
     
-    private fun getAnonymousTokenForGHCR(repository: String): String? {
+    private suspend fun getAnonymousTokenForGHCR(repository: String): String? {
         val tokenUrl = "https://ghcr.io/token?scope=repository:$repository:pull"
         logger.debug { "Fetching anonymous token for repository: $repository" }
         
@@ -113,7 +113,7 @@ class GHCRStrategy : BaseRegistryStrategy() {
             .build()
         
         return try {
-            client.newCall(request).execute().use { response ->
+            client.newCall(request).await().use { response ->
                 if (!response.isSuccessful) {
                     logger.warn { "Failed to fetch anonymous token: ${response.code}" }
                     return null

@@ -38,7 +38,7 @@ class DockerHubStrategy : BaseRegistryStrategy() {
             
             val request = requestBuilder.build()
             
-            client.newCall(request).execute().use { response ->
+            client.newCall(request).await().use { response ->
                 if (!response.isSuccessful) {
                     logger.warn { "Failed to fetch tags from Docker Hub: ${response.code}" }
                     return@withContext emptyList()
@@ -70,7 +70,7 @@ class DockerHubStrategy : BaseRegistryStrategy() {
             
             val request = requestBuilder.build()
             
-            client.newCall(request).execute().use { response ->
+            client.newCall(request).await().use { response ->
                 logger.debug { "Docker Hub response code: ${response.code}" }
                 if (!response.isSuccessful) {
                     logger.warn { "Failed to fetch digest from Docker Hub: ${response.code}" }

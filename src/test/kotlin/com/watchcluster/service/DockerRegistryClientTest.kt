@@ -1,10 +1,12 @@
 package com.watchcluster.service
 
 import io.mockk.*
+import io.mockk.coEvery
 import kotlinx.coroutines.runBlocking
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.*
@@ -20,12 +22,20 @@ class DockerRegistryClientTest {
         mockClient = mockk()
         mockCall = mockk()
         
+        // Mock the extension function
+        mockkStatic("com.watchcluster.service.DockerRegistryClientKt")
+        
         // Create DockerRegistryClient with mocked OkHttpClient
         registryClient = DockerRegistryClient().also {
             val clientField = it::class.java.getDeclaredField("client")
             clientField.isAccessible = true
             clientField.set(it, mockClient)
         }
+    }
+    
+    @AfterEach
+    fun tearDown() {
+        unmockkAll()
     }
     
     @Test
@@ -51,7 +61,7 @@ class DockerRegistryClientTest {
             .build()
         
         every { mockClient.newCall(any()) } returns mockCall
-        every { mockCall.execute() } returns response
+        coEvery { mockCall.await() } returns response
         
         // When
         val tags = registryClient.getTags(null, repository)
@@ -80,7 +90,7 @@ class DockerRegistryClientTest {
             .build()
         
         every { mockClient.newCall(any()) } returns mockCall
-        every { mockCall.execute() } returns response
+        coEvery { mockCall.await() } returns response
         
         // When
         val tags = registryClient.getTags(registry, repository)
@@ -103,7 +113,7 @@ class DockerRegistryClientTest {
             .build()
         
         every { mockClient.newCall(any()) } returns mockCall
-        every { mockCall.execute() } returns response
+        coEvery { mockCall.await() } returns response
         
         // When
         val tags = registryClient.getTags(null, repository)
@@ -133,7 +143,7 @@ class DockerRegistryClientTest {
             .build()
         
         every { mockClient.newCall(any()) } returns mockCall
-        every { mockCall.execute() } returns response
+        coEvery { mockCall.await() } returns response
         
         // When
         val digest = registryClient.getImageDigest(null, repository, tag)
@@ -160,7 +170,7 @@ class DockerRegistryClientTest {
             .build()
         
         every { mockClient.newCall(any()) } returns mockCall
-        every { mockCall.execute() } returns response
+        coEvery { mockCall.await() } returns response
         
         // When
         val digest = registryClient.getImageDigest(registry, repository, tag)
@@ -189,7 +199,7 @@ class DockerRegistryClientTest {
             .build()
         
         every { mockClient.newCall(any()) } returns mockCall
-        every { mockCall.execute() } returns response
+        coEvery { mockCall.await() } returns response
         
         // When
         val tags = registryClient.getTags("ghcr.io", repository)
@@ -229,10 +239,10 @@ class DockerRegistryClientTest {
         val mockManifestCall = mockk<okhttp3.Call>()
         
         every { mockClient.newCall(match { it.url.toString().contains("/token") }) } returns mockTokenCall
-        every { mockTokenCall.execute() } returns tokenResponse
+        coEvery { mockTokenCall.await() } returns tokenResponse
         
         every { mockClient.newCall(match { it.url.toString().contains("/manifests/") }) } returns mockManifestCall
-        every { mockManifestCall.execute() } returns manifestResponse
+        coEvery { mockManifestCall.await() } returns manifestResponse
         
         // When
         val digest = registryClient.getImageDigest("ghcr.io", repository, tag)
@@ -255,7 +265,7 @@ class DockerRegistryClientTest {
             .build()
         
         every { mockClient.newCall(any()) } returns mockCall
-        every { mockCall.execute() } returns response
+        coEvery { mockCall.await() } returns response
         
         // When
         val tags = registryClient.getTags("ghcr.io", repository)
@@ -297,7 +307,7 @@ class DockerRegistryClientTest {
             .build()
         
         every { mockClient.newCall(any()) } returns mockCall
-        every { mockCall.execute() } returns response
+        coEvery { mockCall.await() } returns response
         
         // When
         val tags = registryClient.getTags(null, repository)

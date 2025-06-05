@@ -6,6 +6,7 @@ import com.watchcluster.model.WebhookConfig
 import com.watchcluster.model.WebhookEvent
 import com.watchcluster.model.WebhookEventType
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.future.await
 import mu.KotlinLogging
 import java.net.URI
 import java.net.http.HttpClient
@@ -48,7 +49,7 @@ class WebhookService(
         var lastResponse: HttpResponse<String>? = null
         repeat(webhookConfig.retryCount) { attempt ->
             try {
-                sendHttpRequest(webhookConfig.url, event)
+                sendHttpRequestAsync(webhookConfig.url, event)
                 logger.info { "Webhook sent successfully for ${event.eventType}: ${event.deployment.namespace}/${event.deployment.name}" }
                 return
             } catch (e: Exception) {
@@ -99,7 +100,7 @@ class WebhookService(
             }
     }
     
-    private fun sendHttpRequest(url: String, event: WebhookEvent): HttpResponse<String> {
+    private suspend fun sendHttpRequestAsync(url: String, event: WebhookEvent): HttpResponse<String> {
         val requestBody = objectMapper.writeValueAsString(event)
         
         val requestBuilder = HttpRequest.newBuilder()
@@ -113,7 +114,7 @@ class WebhookService(
         }
         
         val request = requestBuilder.build()
-        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+        val response = httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
         
         if (response.statusCode() !in 200..299) {
             throw HttpRequestException("Webhook failed with status ${response.statusCode()}: ${response.body()}", response)

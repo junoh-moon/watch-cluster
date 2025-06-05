@@ -6,6 +6,8 @@ import com.watchcluster.model.ImageUpdateResult
 import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.util.ImageParser
 import io.fabric8.kubernetes.client.KubernetesClient
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import mu.KotlinLogging
 import java.util.Base64
 
@@ -41,16 +43,18 @@ class ImageChecker(
         }
     }
 
-    private fun extractDockerAuth(namespace: String, secretNames: List<String>, image: String): DockerAuth? {
+    private suspend fun extractDockerAuth(namespace: String, secretNames: List<String>, image: String): DockerAuth? {
         val components = ImageParser.parseImageString(image)
         val registryUrl = components.registry ?: "index.docker.io"
         
         for (secretName in secretNames) {
             try {
-                val secret = kubernetesClient.secrets()
-                    .inNamespace(namespace)
-                    .withName(secretName)
-                    .get()
+                val secret = withContext(Dispatchers.IO) {
+                    kubernetesClient.secrets()
+                        .inNamespace(namespace)
+                        .withName(secretName)
+                        .get()
+                }
                 
                 if (secret?.type == "kubernetes.io/dockerconfigjson") {
                     val dockerConfigJson = secret.data?.get(".dockerconfigjson") ?: continue

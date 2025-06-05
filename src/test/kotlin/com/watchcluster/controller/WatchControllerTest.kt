@@ -11,6 +11,7 @@ import io.fabric8.kubernetes.client.informers.ResourceEventHandler
 import io.fabric8.kubernetes.client.informers.SharedIndexInformer
 import io.mockk.*
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.*
@@ -51,7 +52,9 @@ class WatchControllerTest {
         every { mockNamespaceOp.inform(any<ResourceEventHandler<Deployment>>()) } returns mockInformer
         
         // When
-        watchController.start()
+        runBlocking {
+            watchController.start()
+        }
         
         // Then
         verify { mockKubernetesClient.apps().deployments() }
