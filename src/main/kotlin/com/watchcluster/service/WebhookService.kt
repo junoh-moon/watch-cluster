@@ -8,6 +8,7 @@ import com.watchcluster.model.WebhookEventType
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.future.await
 import mu.KotlinLogging
+import org.springframework.stereotype.Service
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -18,6 +19,7 @@ import java.net.http.HttpTimeoutException
 
 private val logger = KotlinLogging.logger {}
 
+@Service
 class WebhookService(
     private val webhookConfig: WebhookConfig
 ) {

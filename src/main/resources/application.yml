@@ -1,0 +1,30 @@
+spring:
+  application:
+    name: watch-cluster
+
+logging:
+  level:
+    com.watchcluster: INFO
+    io.fabric8.kubernetes: WARN
+    okhttp3: WARN
+  
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      enabled: true
+      show-details: always
+    info:
+      enabled: true
+    metrics:
+      enabled: true
+
+# Application info
+info:
+  app:
+    name: watch-cluster
+    description: Kubernetes deployment image update monitor
+    version: "1.0.0"
