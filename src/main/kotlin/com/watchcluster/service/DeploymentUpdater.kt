@@ -7,13 +7,11 @@ import io.fabric8.kubernetes.client.dsl.RollableScalableResource
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import mu.KotlinLogging
-import org.springframework.stereotype.Service
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
 private val logger = KotlinLogging.logger {}
 
-@Service
 class DeploymentUpdater(
     private val kubernetesClient: KubernetesClient,
     private val webhookService: WebhookService

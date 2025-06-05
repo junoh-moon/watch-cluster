@@ -6,14 +6,12 @@ import com.cronutils.model.time.ExecutionTime
 import com.cronutils.parser.CronParser
 import kotlinx.coroutines.*
 import mu.KotlinLogging
-import org.springframework.stereotype.Component
 import java.time.ZonedDateTime
 import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 
 private val logger = KotlinLogging.logger {}
 
-@Component
 class CronScheduler {
     private val jobs = ConcurrentHashMap<String, Job>()
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
