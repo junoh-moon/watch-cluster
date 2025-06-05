@@ -21,7 +21,7 @@ class GenericRegistryStrategy(private val registry: String) : BaseRegistryStrate
     private val mapper = jacksonObjectMapper()
     
     override suspend fun getTags(repository: String, dockerAuth: DockerAuth?): List<String> = withContext(Dispatchers.IO) {
-        try {
+        runCatching {
             val url = "https://$registry/v2/$repository/tags/list"
             
             val requestBuilder = Request.Builder()
@@ -44,14 +44,14 @@ class GenericRegistryStrategy(private val registry: String) : BaseRegistryStrate
                 val tagsResponse = mapper.readTree(body)
                 tagsResponse.get("tags")?.map { it.asText() } ?: emptyList()
             }
-        } catch (e: Exception) {
+        }.getOrElse { e ->
             logger.error(e) { "Failed to fetch tags for $repository from $registry" }
             emptyList()
         }
     }
     
     override suspend fun getImageDigest(repository: String, tag: String, dockerAuth: DockerAuth?): String? = withContext(Dispatchers.IO) {
-        try {
+        runCatching {
             val url = "https://$registry/v2/$repository/manifests/$tag"
             logger.debug { "Fetching generic registry digest from: $url" }
             
@@ -78,7 +78,7 @@ class GenericRegistryStrategy(private val registry: String) : BaseRegistryStrate
                 logger.debug { "Generic registry digest from header: $digest" }
                 digest
             }
-        } catch (e: Exception) {
+        }.getOrElse { e ->
             logger.error(e) { "Failed to fetch digest for $repository:$tag from $registry" }
             null
         }

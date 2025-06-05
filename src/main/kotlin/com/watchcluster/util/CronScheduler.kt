@@ -20,7 +20,7 @@ class CronScheduler {
     fun scheduleJob(jobId: String, cronExpression: String, task: suspend () -> Unit) {
         cancelJob(jobId)
         
-        try {
+        runCatching {
             val cron = cronParser.parse(cronExpression)
             val executionTime = ExecutionTime.forCron(cron)
             
@@ -34,10 +34,10 @@ class CronScheduler {
                         if (delayMillis > 0) {
                             delay(delayMillis)
                             if (isActive) {
-                                try {
+                                runCatching {
                                     logger.debug { "Executing job: $jobId" }
                                     task()
-                                } catch (e: Exception) {
+                                }.onFailure { e ->
                                     logger.error(e) { "Error executing job: $jobId" }
                                 }
                             }
@@ -51,7 +51,7 @@ class CronScheduler {
             
             jobs[jobId] = job
             logger.info { "Scheduled job: $jobId with cron: $cronExpression" }
-        } catch (e: Exception) {
+        }.onFailure { e ->
             logger.error(e) { "Failed to schedule job: $jobId with cron: $cronExpression" }
         }
     }

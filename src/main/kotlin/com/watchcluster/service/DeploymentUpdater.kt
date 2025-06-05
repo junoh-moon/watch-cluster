@@ -17,7 +17,7 @@ class DeploymentUpdater(
     private val webhookService: WebhookService
 ) {
     suspend fun updateDeployment(namespace: String, name: String, newImage: String, updateResult: ImageUpdateResult? = null) {
-        try {
+        runCatching {
             logger.info { "Updating deployment $namespace/$name with new image: $newImage" }
             
             val previousImage = getCurrentImage(namespace, name)
@@ -59,8 +59,7 @@ class DeploymentUpdater(
             addUpdateAnnotation(deploymentResource, imageToSet, updateResult)
             
             waitForRollout(deploymentResource, namespace, name, imageToSet)
-            
-        } catch (e: Exception) {
+        }.onFailure { e ->
             logger.error(e) { "Failed to update deployment $namespace/$name" }
             
             webhookService.sendWebhook(WebhookEvent(
@@ -75,7 +74,7 @@ class DeploymentUpdater(
     }
     
     private suspend fun addUpdateAnnotation(deploymentResource: RollableScalableResource<Deployment>, newImage: String, updateResult: ImageUpdateResult?) {
-        try {
+        runCatching {
             val deployment = withContext(Dispatchers.IO) {
                 deploymentResource.get()
             }
@@ -98,13 +97,13 @@ class DeploymentUpdater(
             withContext(Dispatchers.IO) {
                 deploymentResource.patch(deployment)
             }
-        } catch (e: Exception) {
+        }.onFailure { e ->
             logger.warn(e) { "Failed to add update annotation" }
         }
     }
     
     private suspend fun getCurrentImage(namespace: String, name: String): String {
-        return try {
+        return runCatching {
             val deployment = withContext(Dispatchers.IO) {
                 kubernetesClient.apps()
                     .deployments()
@@ -113,7 +112,7 @@ class DeploymentUpdater(
                     .get()
             }
             deployment?.spec?.template?.spec?.containers?.get(0)?.image ?: "unknown"
-        } catch (e: Exception) {
+        }.getOrElse {
             "unknown"
         }
     }
@@ -124,7 +123,7 @@ class DeploymentUpdater(
         name: String,
         newImage: String
     ) {
-        try {
+        runCatching {
             logger.info { "Waiting for rollout to complete..." }
             val timeout = 300000L
             val startTime = System.currentTimeMillis()
@@ -169,7 +168,7 @@ class DeploymentUpdater(
             }
             
             logger.warn { "Rollout timeout after \\${timeout/1000} seconds" }
-        } catch (e: Exception) {
+        }.onFailure { e ->
             logger.warn(e) { "Error waiting for rollout" }
         }
     }

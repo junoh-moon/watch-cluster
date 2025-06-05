@@ -111,7 +111,7 @@ class WatchController(
     // parseStrategy method removed - using UpdateStrategy.fromString() directly
 
     private suspend fun checkAndUpdateDeployment(deployment: WatchedDeployment) {
-        try {
+        runCatching {
             logger.info { "Checking for updates: ${deployment.namespace}/${deployment.name}" }
             
             val updateResult = imageChecker.checkForUpdate(
@@ -146,7 +146,7 @@ class WatchController(
                     }
                 }
             }
-        } catch (e: Exception) {
+        }.onFailure { e ->
             logger.error(e) {"Error checking deployment ${deployment.namespace}/${deployment.name}" }
         }
     }

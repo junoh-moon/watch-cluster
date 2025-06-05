@@ -48,12 +48,12 @@ class WebhookService(
         var lastException: Exception? = null
         var lastResponse: HttpResponse<String>? = null
         repeat(webhookConfig.retryCount) { attempt ->
-            try {
-                sendHttpRequestAsync(webhookConfig.url, event)
+            runCatching {
+                sendHttpRequestAsync(webhookConfig.url!!, event)
                 logger.info { "Webhook sent successfully for ${event.eventType}: ${event.deployment.namespace}/${event.deployment.name}" }
                 return
-            } catch (e: Exception) {
-                lastException = e
+            }.onFailure { e ->
+                lastException = e as? Exception ?: Exception(e)
                 if (e is HttpRequestException) {
                     lastResponse = e.response
                 }
@@ -79,7 +79,7 @@ class WebhookService(
             ?.firstValue("Retry-After")
             ?.orElse(null)
             ?.let { retryAfter ->
-                try {
+                runCatching {
                     // Retry-After can be either seconds or HTTP-date
                     retryAfter.toLongOrNull()?.let { seconds ->
                         logger.debug { "429 Rate Limit: Retry-After header indicates ${seconds} seconds" }
@@ -90,7 +90,7 @@ class WebhookService(
                         logger.debug { "429 Rate Limit: Retry-After header is not numeric, using exponential backoff" }
                         1000L * (attempt + 1)
                     }
-                } catch (e: Exception) {
+                }.getOrElse { e ->
                     logger.warn(e) { "Failed to parse Retry-After header: $retryAfter" }
                     1000L * (attempt + 1)
                 }

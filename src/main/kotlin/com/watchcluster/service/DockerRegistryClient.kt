@@ -68,13 +68,13 @@ class DockerRegistryClient {
     private val mapper = jacksonObjectMapper()
     
     suspend fun getTags(registry: String?, repository: String, dockerAuth: DockerAuth? = null): List<String> = withContext(Dispatchers.IO) {
-        try {
+        runCatching {
             when {
                 registry == null || registry == "docker.io" -> getDockerHubTags(repository, dockerAuth)
                 registry.contains("ghcr.io") -> getGitHubContainerRegistryTags(repository, dockerAuth)
                 else -> getGenericRegistryTags(registry, repository, dockerAuth)
             }
-        } catch (e: Exception) {
+        }.getOrElse { e ->
             logger.error(e) { "Failed to fetch tags for $repository from $registry" }
             emptyList()
         }
@@ -82,7 +82,7 @@ class DockerRegistryClient {
     
     suspend fun getImageDigest(registry: String?, repository: String, tag: String, dockerAuth: DockerAuth? = null): String? = withContext(Dispatchers.IO) {
         logger.debug { "Getting image digest for registry=$registry, repository=$repository, tag=$tag" }
-        try {
+        runCatching {
             val digest = when {
                 registry == null || registry == "docker.io" -> {
                     logger.debug { "Using Docker Hub for digest lookup" }
@@ -99,7 +99,7 @@ class DockerRegistryClient {
             }
             logger.debug { "Retrieved digest: $digest" }
             digest
-        } catch (e: Exception) {
+        }.getOrElse { e ->
             logger.error(e) { "Failed to fetch digest for $repository:$tag from $registry" }
             null
         }
@@ -267,7 +267,7 @@ class DockerRegistryClient {
             .get()
             .build()
         
-        return try {
+        return runCatching {
             client.newCall(request).await().use { response ->
                 if (!response.isSuccessful) {
                     logger.warn { "Failed to fetch anonymous token: ${response.code}" }
@@ -280,7 +280,7 @@ class DockerRegistryClient {
                 logger.debug { "Successfully obtained anonymous token" }
                 token
             }
-        } catch (e: Exception) {
+        }.getOrElse { e ->
             logger.error(e) { "Error fetching anonymous token" }
             null
         }

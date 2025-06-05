@@ -26,14 +26,14 @@ class ImageChecker(
         imagePullSecrets: List<String>?,
         deploymentName: String? = null
     ): ImageUpdateResult {
-        return try {
+        return runCatching {
             val dockerAuth = imagePullSecrets?.let { extractDockerAuth(namespace, it, currentImage) }
             
             when (strategy) {
                 is UpdateStrategy.Version -> checkVersionUpdate(currentImage, strategy, dockerAuth)
                 is UpdateStrategy.Latest -> checkLatestUpdate(currentImage, dockerAuth, namespace, deploymentName)
             }
-        } catch (e: Exception) {
+        }.getOrElse { e ->
             logger.error(e) { "Error checking image update for $currentImage" }
             ImageUpdateResult(
                 hasUpdate = false,
@@ -48,7 +48,7 @@ class ImageChecker(
         val registryUrl = components.registry ?: "index.docker.io"
         
         for (secretName in secretNames) {
-            try {
+            runCatching {
                 val secret = withContext(Dispatchers.IO) {
                     kubernetesClient.secrets()
                         .inNamespace(namespace)
@@ -57,10 +57,10 @@ class ImageChecker(
                 }
                 
                 if (secret?.type == "kubernetes.io/dockerconfigjson") {
-                    val dockerConfigJson = secret.data?.get(".dockerconfigjson") ?: continue
+                    val dockerConfigJson = secret.data?.get(".dockerconfigjson") ?: return@runCatching
                     val decodedConfig = Base64.getDecoder().decode(dockerConfigJson).toString(Charsets.UTF_8)
                     val configRoot = objectMapper.readTree(decodedConfig)
-                    val authsNode = configRoot.get("auths") ?: continue
+                    val authsNode = configRoot.get("auths") ?: return@runCatching
                     
                     // Try exact match first
                     var authNode = authsNode.get(registryUrl)
@@ -73,13 +73,13 @@ class ImageChecker(
                     }
                     
                     if (authNode != null) {
-                        val authString = authNode.get("auth")?.asText() ?: continue
+                        val authString = authNode.get("auth")?.asText() ?: return@runCatching
                         val decodedAuth = Base64.getDecoder().decode(authString).toString(Charsets.UTF_8)
                         val (username, password) = decodedAuth.split(":", limit = 2)
                         return DockerAuth(username, password)
                     }
                 }
-            } catch (e: Exception) {
+            }.onFailure { e ->
                 logger.error(e) { "Error extracting auth from secret $secretName" }
             }
         }
@@ -227,18 +227,18 @@ class ImageChecker(
     }
     
     private suspend fun safeGetCurrentDigest(currentImage: String, dockerAuth: DockerAuth?): String? {
-        return try {
+        return runCatching {
             getCurrentImageDigest(currentImage, dockerAuth)
-        } catch (e: Exception) {
+        }.getOrElse { e ->
             logger.debug { "Could not get current digest: ${e.message}" }
             null
         }
     }
     
     private suspend fun safeGetImageDigest(registry: String?, repository: String, tag: String, dockerAuth: DockerAuth?): String? {
-        return try {
+        return runCatching {
             getImageDigest(registry, repository, tag, dockerAuth)
-        } catch (e: Exception) {
+        }.getOrElse { e ->
             logger.debug { "Could not get new digest: ${e.message}" }
             null
         }
@@ -257,12 +257,12 @@ class ImageChecker(
             )
         }
         
-        try {
+        return runCatching {
             val registryDigest = getImageDigest(registry, repository, tag, dockerAuth)
             val currentDigest = getCurrentImageDigest(currentImage, dockerAuth, namespace, deploymentName)
 
             
-            return if (registryDigest != null && currentDigest != null && registryDigest != currentDigest) {
+            if (registryDigest != null && currentDigest != null && registryDigest != currentDigest) {
                 ImageUpdateResult(
                     hasUpdate = true,
                     currentImage = currentImage,
@@ -280,9 +280,9 @@ class ImageChecker(
                     newDigest = registryDigest
                 )
             }
-        } catch (e: Exception) {
+        }.getOrElse { e ->
             logger.error(e) { "Error checking image digest for tag '$tag'" }
-            return ImageUpdateResult(
+            ImageUpdateResult(
                 hasUpdate = false,
                 currentImage = currentImage,
                 reason = "Error checking digest: ${e.message}"
@@ -292,9 +292,9 @@ class ImageChecker(
 
 
     private suspend fun getAvailableTags(registry: String?, repository: String, dockerAuth: DockerAuth?): List<String> {
-        return try {
+        return runCatching {
             registryClient.getTags(registry, repository, dockerAuth)
-        } catch (e: Exception) {
+        }.getOrElse { e ->
             logger.error(e) { "Error fetching tags for $repository" }
             emptyList()
         }
@@ -305,7 +305,7 @@ class ImageChecker(
     }
 
     private suspend fun getCurrentImageDigest(image: String, @Suppress("UNUSED_PARAMETER") dockerAuth: DockerAuth? = null, namespace: String? = null, deploymentName: String? = null): String? {
-        return try {
+        return runCatching {
             // If we have deployment info, get the actual running digest from Kubernetes
             if (namespace != null && deploymentName != null) {
                 // Get the running pod's image ID - this is the source of truth
@@ -331,7 +331,7 @@ class ImageChecker(
             // Fallback: if we can't get from K8s, return null to indicate unknown
             logger.debug { "Cannot determine current digest from Kubernetes for $image" }
             null
-        } catch (e: Exception) {
+        }.getOrElse { e ->
             logger.error(e) { "Error getting current image digest for $image" }
             null
         }

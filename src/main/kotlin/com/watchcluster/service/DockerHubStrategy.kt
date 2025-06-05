@@ -24,7 +24,7 @@ class DockerHubStrategy : BaseRegistryStrategy() {
     private val mapper = jacksonObjectMapper()
     
     override suspend fun getTags(repository: String, dockerAuth: DockerAuth?): List<String> = withContext(Dispatchers.IO) {
-        try {
+        runCatching {
             val namespace = if (repository.contains("/")) repository else "library/$repository"
             val url = "https://hub.docker.com/v2/repositories/$namespace/tags/?page_size=100"
             
@@ -48,14 +48,14 @@ class DockerHubStrategy : BaseRegistryStrategy() {
                 val tagsResponse = mapper.readValue<com.watchcluster.service.DockerHubTagsResponse>(body)
                 tagsResponse.results.map { it.name }
             }
-        } catch (e: Exception) {
+        }.getOrElse { e ->
             logger.error(e) { "Failed to fetch tags for $repository from Docker Hub" }
             emptyList()
         }
     }
     
     override suspend fun getImageDigest(repository: String, tag: String, dockerAuth: DockerAuth?): String? = withContext(Dispatchers.IO) {
-        try {
+        runCatching {
             val namespace = if (repository.contains("/")) repository else "library/$repository"
             val url = "https://hub.docker.com/v2/repositories/$namespace/tags/$tag/"
             logger.debug { "Fetching Docker Hub digest from: $url" }
@@ -84,7 +84,7 @@ class DockerHubStrategy : BaseRegistryStrategy() {
                 logger.debug { "Extracted Docker Hub digest: $digest" }
                 digest
             }
-        } catch (e: Exception) {
+        }.getOrElse { e ->
             logger.error(e) { "Failed to fetch digest for $repository:$tag from Docker Hub" }
             null
         }

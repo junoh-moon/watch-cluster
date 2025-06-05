@@ -14,7 +14,7 @@ fun main() {
         runBlocking(singleThreadContext) {
     logger.info { "Starting watch-cluster..." }
 
-    try {
+    runCatching {
         // Load and log environment variables
         val podName = System.getenv("POD_NAME") ?: "unknown"
         val podNamespace = System.getenv("POD_NAMESPACE") ?: "unknown"
@@ -66,7 +66,7 @@ fun main() {
 
             val controller = WatchController(kubernetesClient)
             controller.start()
-        } catch (e: Exception) {
+        }.onFailure { e ->
             logger.error(e) { "Failed to start watch-cluster" }
             throw e
         }
