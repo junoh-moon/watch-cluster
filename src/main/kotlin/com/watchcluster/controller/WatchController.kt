@@ -10,11 +10,8 @@ import io.fabric8.kubernetes.client.KubernetesClient
 import io.fabric8.kubernetes.client.informers.ResourceEventHandler
 import kotlinx.coroutines.*
 import mu.KotlinLogging
-import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Component
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.coroutines.CoroutineContext
-import kotlin.coroutines.coroutineContext
 
 private val logger = KotlinLogging.logger {}
 
@@ -25,26 +22,23 @@ class WatchController(
     private val imageChecker: ImageChecker,
     private val deploymentUpdater: DeploymentUpdater,
     private val cronScheduler: CronScheduler,
-    @Qualifier("watchClusterContext") private val watchClusterContext: CoroutineContext
 ) {
     private val watchedDeployments = ConcurrentHashMap<String, WatchedDeployment>()
 
     suspend fun start() {
         logger.info { "Starting deployment watcher..." }
         
-        val currentScope = CoroutineScope(watchClusterContext)
-        
         kubernetesClient.apps().deployments()
             .inAnyNamespace()
             .inform(object : ResourceEventHandler<Deployment> {
                 override fun onAdd(deployment: Deployment) {
-                    currentScope.async {
+                    CoroutineScope(Dispatchers.IO).launch {
                         handleDeployment(deployment)
                     }
                 }
 
                 override fun onUpdate(oldDeployment: Deployment, newDeployment: Deployment) {
-                    currentScope.async {
+                    CoroutineScope(Dispatchers.IO).launch {
                         handleDeployment(newDeployment)
                     }
                 }
@@ -64,7 +58,6 @@ class WatchController(
         
         if (!enabled) return
         
-        val currentScope = CoroutineScope(watchClusterContext)
         val namespace = deployment.metadata.namespace
         val name = deployment.metadata.name
         val key = "$namespace/$name"
@@ -92,12 +85,12 @@ class WatchController(
         watchedDeployments[key] = watchedDeployment
         
         cronScheduler.scheduleJob(key, cronExpression) {
-            currentScope.async {
+            CoroutineScope(Dispatchers.IO).launch {
                 checkAndUpdateDeployment(watchedDeployment)
             }
         }
         
-        currentScope.async {
+        CoroutineScope(Dispatchers.IO).launch {
             webhookService.sendWebhook(WebhookEvent(
                 eventType = WebhookEventType.DEPLOYMENT_DETECTED,
                 timestamp = java.time.Instant.now().toString(),
