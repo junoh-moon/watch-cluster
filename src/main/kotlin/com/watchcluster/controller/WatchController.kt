@@ -21,6 +21,7 @@ class WatchController(
     private val webhookService: WebhookService,
     private val imageChecker: ImageChecker,
     private val deploymentUpdater: DeploymentUpdater,
+    private val deploymentUpdateManager: DeploymentUpdateManager,
     private val cronScheduler: CronScheduler,
 ) {
     private val watchedDeployments = ConcurrentHashMap<String, WatchedDeployment>()
@@ -47,6 +48,10 @@ class WatchController(
                     val key = "${deployment.metadata.namespace}/${deployment.metadata.name}"
                     watchedDeployments.remove(key)
                     cronScheduler.cancelJob(key)
+                    deploymentUpdateManager.removeDeployment(
+                        deployment.metadata.namespace,
+                        deployment.metadata.name
+                    )
                     logger.info { "Stopped watching deployment: $key" }
                 }
             })
@@ -108,43 +113,49 @@ class WatchController(
     // parseStrategy method removed - using UpdateStrategy.fromString() directly
 
     private suspend fun checkAndUpdateDeployment(deployment: WatchedDeployment) {
-        runCatching {
-            logger.info { "Checking for updates: ${deployment.namespace}/${deployment.name}" }
-            
-            val updateResult = imageChecker.checkForUpdate(
-                deployment.currentImage,
-                deployment.updateStrategy,
-                deployment.namespace,
-                deployment.imagePullSecrets,
-                deployment.name
-            )
-            
-            when {
-                updateResult.hasUpdate -> {
-                    logger.info {
-                        buildString {
-                            append("Found update for ${deployment.namespace}/${deployment.name}: ${updateResult.newImage}")
-                            updateResult.reason?.let { append(" $it") }
+        // Use DeploymentUpdateManager to ensure serialized updates for each deployment
+        deploymentUpdateManager.executeUpdate(
+            deployment.namespace,
+            deployment.name
+        ) {
+            runCatching {
+                logger.info { "Checking for updates: ${deployment.namespace}/${deployment.name}" }
+                
+                val updateResult = imageChecker.checkForUpdate(
+                    deployment.currentImage,
+                    deployment.updateStrategy,
+                    deployment.namespace,
+                    deployment.imagePullSecrets,
+                    deployment.name
+                )
+                
+                when {
+                    updateResult.hasUpdate -> {
+                        logger.info {
+                            buildString {
+                                append("Found update for ${deployment.namespace}/${deployment.name}: ${updateResult.newImage}")
+                                updateResult.reason?.let { append(" $it") }
+                            }
+                        }
+                        deploymentUpdater.updateDeployment(
+                            deployment.namespace,
+                            deployment.name,
+                            updateResult.newImage!!,
+                            updateResult
+                        )
+                    }
+                    else -> {
+                        logger.debug {
+                            buildString {
+                                append("No update available for ${deployment.namespace}/${deployment.name}.")
+                                updateResult.reason?.let { append(" $it") }
+                            }
                         }
                     }
-                    deploymentUpdater.updateDeployment(
-                        deployment.namespace,
-                        deployment.name,
-                        updateResult.newImage!!,
-                        updateResult
-                    )
                 }
-                else -> {
-                    logger.debug {
-                        buildString {
-                            append("No update available for ${deployment.namespace}/${deployment.name}.")
-                            updateResult.reason?.let { append(" $it") }
-                        }
-                    }
-                }
+            }.onFailure { e ->
+                logger.error(e) {"Error checking deployment ${deployment.namespace}/${deployment.name}" }
             }
-        }.onFailure { e ->
-            logger.error(e) {"Error checking deployment ${deployment.namespace}/${deployment.name}" }
         }
     }
 

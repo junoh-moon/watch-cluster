@@ -26,6 +26,7 @@ class WatchControllerTest {
     private lateinit var mockWebhookService: WebhookService
     private lateinit var mockImageChecker: ImageChecker
     private lateinit var mockDeploymentUpdater: DeploymentUpdater
+    private lateinit var mockDeploymentUpdateManager: DeploymentUpdateManager
     private lateinit var mockCronScheduler: CronScheduler
     private lateinit var watchController: WatchController
     
@@ -35,6 +36,7 @@ class WatchControllerTest {
         mockWebhookService = mockk(relaxed = true)
         mockImageChecker = mockk(relaxed = true)
         mockDeploymentUpdater = mockk(relaxed = true)
+        mockDeploymentUpdateManager = mockk(relaxed = true)
         mockCronScheduler = mockk(relaxed = true)
         
         watchController = WatchController(
@@ -42,6 +44,7 @@ class WatchControllerTest {
             mockWebhookService,
             mockImageChecker,
             mockDeploymentUpdater,
+            mockDeploymentUpdateManager,
             mockCronScheduler
         )
     }
