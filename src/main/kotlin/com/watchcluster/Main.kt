@@ -8,7 +8,7 @@ import mu.KotlinLogging
 
 private val logger = KotlinLogging.logger {}
 
-@OptIn(ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class, DelicateCoroutinesApi::class)
 fun main() {
     newSingleThreadContext("WatchClusterThread").use { singleThreadContext ->
         runBlocking(singleThreadContext) {

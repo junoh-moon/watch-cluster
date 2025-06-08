@@ -693,7 +693,6 @@ class ImageCheckerTest {
         // Given
         val namespace = "default"
         val secretName = "docker-registry-secret"
-        val registry = "docker.io"
         val username = "testuser"
         val password = "testpass"
         val authString = Base64.getEncoder().encodeToString("$username:$password".toByteArray())
@@ -722,7 +721,7 @@ class ImageCheckerTest {
         }
         
         // When
-        val result = imageChecker.checkForUpdate("docker.io/myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
+        imageChecker.checkForUpdate("docker.io/myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
         
         // Then
         verify { mockKubernetesClient.secrets() }
