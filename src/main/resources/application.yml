@@ -13,18 +13,10 @@ logging:
     console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
   
 management:
-  endpoints:
-    web:
-      exposure:
-        include: health,info,metrics
-  endpoint:
-    health:
-      enabled: true
-      show-details: always
-    info:
-      enabled: true
-    metrics:
-      enabled: true
+  health:
+    probes:
+      enabled: false
+
 
 # Application info
 info:
