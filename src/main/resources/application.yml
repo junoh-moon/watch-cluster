@@ -5,8 +5,12 @@ spring:
 logging:
   level:
     com.watchcluster: INFO
+    com.watchcluster.util.CronScheduler: INFO
     io.fabric8.kubernetes: WARN
     okhttp3: WARN
+    com.github.dockerjava: INFO
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
   
 management:
   endpoints:
