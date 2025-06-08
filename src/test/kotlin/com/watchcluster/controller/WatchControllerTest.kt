@@ -1,10 +1,6 @@
 package com.watchcluster.controller
 
 import com.watchcluster.model.*
-import com.watchcluster.service.DeploymentUpdater
-import com.watchcluster.service.ImageChecker
-import com.watchcluster.service.WebhookService
-import com.watchcluster.util.CronScheduler
 import io.fabric8.kubernetes.api.model.*
 import io.fabric8.kubernetes.api.model.apps.Deployment
 import io.fabric8.kubernetes.api.model.apps.DeploymentSpec
@@ -16,7 +12,6 @@ import io.fabric8.kubernetes.client.informers.SharedIndexInformer
 import io.mockk.*
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.Dispatchers
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.*
@@ -24,28 +19,20 @@ import kotlin.test.*
 class WatchControllerTest {
     
     private lateinit var mockKubernetesClient: KubernetesClient
-    private lateinit var mockWebhookService: WebhookService
-    private lateinit var mockImageChecker: ImageChecker
-    private lateinit var mockDeploymentUpdater: DeploymentUpdater
-    private lateinit var mockCronScheduler: CronScheduler
     private lateinit var watchController: WatchController
     
     @BeforeEach
     fun setup() {
         mockKubernetesClient = mockk(relaxed = true)
-        mockWebhookService = mockk(relaxed = true)
-        mockImageChecker = mockk(relaxed = true)
-        mockDeploymentUpdater = mockk(relaxed = true)
-        mockCronScheduler = mockk(relaxed = true)
         
-        watchController = WatchController(
-            mockKubernetesClient,
-            mockWebhookService,
-            mockImageChecker,
-            mockDeploymentUpdater,
-            mockCronScheduler,
-            Dispatchers.Unconfined
+        // Mock static method for WebhookConfig
+        mockkObject(WebhookConfig.Companion)
+        every { WebhookConfig.fromEnvironment() } returns WebhookConfig(
+            url = null,
+            timeout = 5000
         )
+        
+        watchController = WatchController(mockKubernetesClient)
     }
     
     @Test

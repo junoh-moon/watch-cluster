@@ -32,8 +32,14 @@ class ImageCheckerTest {
         mockRegistryClient = mockk()
         mockKubernetesClient = mockk()
         
-        // Create ImageChecker with mocked dependencies
-        imageChecker = ImageChecker(mockKubernetesClient, mockRegistryClient)
+        // Create ImageChecker with mocked kubernetes client
+        imageChecker = ImageChecker(mockKubernetesClient)
+        
+        // Use reflection to inject mocked registry client
+        ImageChecker::class.java.getDeclaredField("registryClient").apply {
+            isAccessible = true
+            set(imageChecker, mockRegistryClient)
+        }
     }
     
     @Test

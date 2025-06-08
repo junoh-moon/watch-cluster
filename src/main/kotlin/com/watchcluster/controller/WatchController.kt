@@ -10,29 +10,25 @@ import io.fabric8.kubernetes.client.KubernetesClient
 import io.fabric8.kubernetes.client.informers.ResourceEventHandler
 import kotlinx.coroutines.*
 import mu.KotlinLogging
-import org.springframework.beans.factory.annotation.Qualifier
-import org.springframework.stereotype.Component
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.coroutineContext
 
 private val logger = KotlinLogging.logger {}
 
-@Component
 class WatchController(
-    private val kubernetesClient: KubernetesClient,
-    private val webhookService: WebhookService,
-    private val imageChecker: ImageChecker,
-    private val deploymentUpdater: DeploymentUpdater,
-    private val cronScheduler: CronScheduler,
-    @Qualifier("watchClusterContext") private val watchClusterContext: CoroutineContext
+    private val kubernetesClient: KubernetesClient
 ) {
+    private val webhookConfig = WebhookConfig.fromEnvironment()
+    private val webhookService = WebhookService(webhookConfig)
+    private val imageChecker = ImageChecker(kubernetesClient)
+    private val deploymentUpdater = DeploymentUpdater(kubernetesClient, webhookService)
+    private val cronScheduler = CronScheduler()
     private val watchedDeployments = ConcurrentHashMap<String, WatchedDeployment>()
 
     suspend fun start() {
         logger.info { "Starting deployment watcher..." }
         
-        val currentScope = CoroutineScope(watchClusterContext)
+        val currentScope = CoroutineScope(coroutineContext)
         
         kubernetesClient.apps().deployments()
             .inAnyNamespace()
@@ -64,7 +60,7 @@ class WatchController(
         
         if (!enabled) return
         
-        val currentScope = CoroutineScope(watchClusterContext)
+        val currentScope = CoroutineScope(coroutineContext)
         val namespace = deployment.metadata.namespace
         val name = deployment.metadata.name
         val key = "$namespace/$name"
