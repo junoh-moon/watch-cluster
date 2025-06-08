@@ -15,7 +15,7 @@ repositories {
 }
 
 dependencies {
-    implementation("io.fabric8:kubernetes-client:6.9.2")
+    implementation("io.fabric8:kubernetes-client:7.3.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
     implementation("com.cronutils:cron-utils:9.2.1")
     implementation("com.github.docker-java:docker-java:3.3.4")
