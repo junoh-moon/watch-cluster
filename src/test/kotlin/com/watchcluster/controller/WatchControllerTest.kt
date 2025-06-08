@@ -16,6 +16,7 @@ import io.fabric8.kubernetes.client.informers.SharedIndexInformer
 import io.mockk.*
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.*
@@ -42,7 +43,8 @@ class WatchControllerTest {
             mockWebhookService,
             mockImageChecker,
             mockDeploymentUpdater,
-            mockCronScheduler
+            mockCronScheduler,
+            Dispatchers.Unconfined
         )
     }
     

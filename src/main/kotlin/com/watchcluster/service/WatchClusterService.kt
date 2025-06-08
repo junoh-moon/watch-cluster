@@ -9,8 +9,11 @@ import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.SmartLifecycle
 import org.springframework.context.event.EventListener
+import org.springframework.scheduling.TaskScheduler
 import org.springframework.stereotype.Service
 import java.time.Instant
+import java.util.concurrent.ScheduledFuture
+import kotlin.coroutines.CoroutineContext
 
 private val logger = KotlinLogging.logger {}
 
@@ -19,27 +22,34 @@ class WatchClusterService(
     private val watchController: WatchController,
     private val webhookConfig: WebhookConfig,
     private val kubernetesClient: KubernetesClient,
+    @Qualifier("watchClusterScheduler") private val taskScheduler: TaskScheduler,
+    @Qualifier("watchClusterContext") private val watchClusterContext: CoroutineContext
 ) : SmartLifecycle {
 
     private var isRunning = false
+    private var watchTask: ScheduledFuture<*>? = null
 
     @EventListener(ApplicationReadyEvent::class)
     fun onApplicationReady() {
         logConfiguration()
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     override fun start() {
         if (isRunning) return
 
         logger.info { "Starting watch-cluster..." }
 
-        runCatching {
-            runBlocking {
-                watchController.start()
+        watchTask = taskScheduler.schedule({
+            runBlocking(watchClusterContext) {
+                runCatching {
+                    watchController.start()
+                }.onFailure { e ->
+                    logger.error(e) { "Failed to start watch-cluster" }
+                    throw e
+                }
             }
-        }.onFailure { e ->
-            logger.error(e) { "Failed to start watch-cluster" }
-        }
+        }, Instant.now())
 
         isRunning = true
     }
@@ -50,6 +60,7 @@ class WatchClusterService(
         logger.info { "Stopping watch-cluster..." }
 
         runCatching {
+            watchTask?.cancel(true)
             watchController.stop()
         }.onFailure { e ->
             logger.error(e) { "Error during shutdown" }
@@ -77,7 +88,7 @@ class WatchClusterService(
         // Get current pod information
         if (podName != "unknown" && podNamespace != "unknown") {
             runCatching {
-                runBlocking {
+                runBlocking(watchClusterContext) {
                     withContext(Dispatchers.IO) {
                         kubernetesClient.pods()
                             .inNamespace(podNamespace)
