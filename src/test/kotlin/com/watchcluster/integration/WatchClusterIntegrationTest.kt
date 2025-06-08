@@ -21,12 +21,7 @@ class WatchClusterIntegrationTest {
         mockWebhookService = mockk()
         
         // Create real services with mocked dependencies
-        imageChecker = ImageChecker(mockk()).apply {
-            // Replace the registry client with our mock using reflection
-            val clientField = this::class.java.getDeclaredField("registryClient")
-            clientField.isAccessible = true
-            clientField.set(this, mockDockerRegistryClient)
-        }
+        imageChecker = ImageChecker(mockk(), mockDockerRegistryClient)
     }
     
     @Test

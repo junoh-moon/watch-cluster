@@ -10,37 +10,36 @@ import io.fabric8.kubernetes.client.KubernetesClient
 import io.fabric8.kubernetes.client.informers.ResourceEventHandler
 import kotlinx.coroutines.*
 import mu.KotlinLogging
+import org.springframework.stereotype.Component
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.coroutines.coroutineContext
 
 private val logger = KotlinLogging.logger {}
 
+@Component
 class WatchController(
-    private val kubernetesClient: KubernetesClient
+    private val kubernetesClient: KubernetesClient,
+    private val webhookService: WebhookService,
+    private val imageChecker: ImageChecker,
+    private val deploymentUpdater: DeploymentUpdater,
+    private val deploymentUpdateManager: DeploymentUpdateManager,
+    private val cronScheduler: CronScheduler,
 ) {
-    private val webhookConfig = WebhookConfig.fromEnvironment()
-    private val webhookService = WebhookService(webhookConfig)
-    private val imageChecker = ImageChecker(kubernetesClient)
-    private val deploymentUpdater = DeploymentUpdater(kubernetesClient, webhookService)
-    private val cronScheduler = CronScheduler()
     private val watchedDeployments = ConcurrentHashMap<String, WatchedDeployment>()
 
     suspend fun start() {
         logger.info { "Starting deployment watcher..." }
         
-        val currentScope = CoroutineScope(coroutineContext)
-        
         kubernetesClient.apps().deployments()
             .inAnyNamespace()
             .inform(object : ResourceEventHandler<Deployment> {
                 override fun onAdd(deployment: Deployment) {
-                    currentScope.async {
+                    CoroutineScope(Dispatchers.IO).launch {
                         handleDeployment(deployment)
                     }
                 }
 
                 override fun onUpdate(oldDeployment: Deployment, newDeployment: Deployment) {
-                    currentScope.async {
+                    CoroutineScope(Dispatchers.IO).launch {
                         handleDeployment(newDeployment)
                     }
                 }
@@ -49,6 +48,10 @@ class WatchController(
                     val key = "${deployment.metadata.namespace}/${deployment.metadata.name}"
                     watchedDeployments.remove(key)
                     cronScheduler.cancelJob(key)
+                    deploymentUpdateManager.removeDeployment(
+                        deployment.metadata.namespace,
+                        deployment.metadata.name
+                    )
                     logger.info { "Stopped watching deployment: $key" }
                 }
             })
@@ -60,7 +63,6 @@ class WatchController(
         
         if (!enabled) return
         
-        val currentScope = CoroutineScope(coroutineContext)
         val namespace = deployment.metadata.namespace
         val name = deployment.metadata.name
         val key = "$namespace/$name"
@@ -88,10 +90,12 @@ class WatchController(
         watchedDeployments[key] = watchedDeployment
         
         cronScheduler.scheduleJob(key, cronExpression) {
-            checkAndUpdateDeployment(watchedDeployment)
+            CoroutineScope(Dispatchers.IO).launch {
+                checkAndUpdateDeployment(watchedDeployment)
+            }
         }
         
-        currentScope.async {
+        CoroutineScope(Dispatchers.IO).launch {
             webhookService.sendWebhook(WebhookEvent(
                 eventType = WebhookEventType.DEPLOYMENT_DETECTED,
                 timestamp = java.time.Instant.now().toString(),
@@ -109,45 +113,49 @@ class WatchController(
     // parseStrategy method removed - using UpdateStrategy.fromString() directly
 
     private suspend fun checkAndUpdateDeployment(deployment: WatchedDeployment) {
-        runCatching {
-            logger.debug { "[WatchController] Starting update check for: ${deployment.namespace}/${deployment.name}" }
-            logger.debug { "[WatchController] Current image: ${deployment.currentImage}" }
-            logger.debug { "[WatchController] Update strategy: ${deployment.updateStrategy}" }
-            
-            val updateResult = imageChecker.checkForUpdate(
-                deployment.currentImage,
-                deployment.updateStrategy,
-                deployment.namespace,
-                deployment.imagePullSecrets,
-                deployment.name
-            )
-            
-            when {
-                updateResult.hasUpdate -> {
-                    logger.info {
-                        buildString {
-                            append("Found update for ${deployment.namespace}/${deployment.name}: ${updateResult.newImage}")
-                            updateResult.reason?.let { append(" $it") }
+        // Use DeploymentUpdateManager to ensure serialized updates for each deployment
+        deploymentUpdateManager.executeUpdate(
+            deployment.namespace,
+            deployment.name
+        ) {
+            runCatching {
+                logger.info { "Checking for updates: ${deployment.namespace}/${deployment.name}" }
+                
+                val updateResult = imageChecker.checkForUpdate(
+                    deployment.currentImage,
+                    deployment.updateStrategy,
+                    deployment.namespace,
+                    deployment.imagePullSecrets,
+                    deployment.name
+                )
+                
+                when {
+                    updateResult.hasUpdate -> {
+                        logger.info {
+                            buildString {
+                                append("Found update for ${deployment.namespace}/${deployment.name}: ${updateResult.newImage}")
+                                updateResult.reason?.let { append(" $it") }
+                            }
+                        }
+                        deploymentUpdater.updateDeployment(
+                            deployment.namespace,
+                            deployment.name,
+                            updateResult.newImage!!,
+                            updateResult
+                        )
+                    }
+                    else -> {
+                        logger.debug {
+                            buildString {
+                                append("No update available for ${deployment.namespace}/${deployment.name}.")
+                                updateResult.reason?.let { append(" $it") }
+                            }
                         }
                     }
-                    deploymentUpdater.updateDeployment(
-                        deployment.namespace,
-                        deployment.name,
-                        updateResult.newImage!!,
-                        updateResult
-                    )
                 }
-                else -> {
-                    logger.debug {
-                        buildString {
-                            append("No update available for ${deployment.namespace}/${deployment.name}.")
-                            updateResult.reason?.let { append(" $it") }
-                        }
-                    }
-                }
+            }.onFailure { e ->
+                logger.error(e) {"Error checking deployment ${deployment.namespace}/${deployment.name}" }
             }
-        }.onFailure { e ->
-            logger.error(e) {"Error checking deployment ${deployment.namespace}/${deployment.name}" }
         }
     }
 

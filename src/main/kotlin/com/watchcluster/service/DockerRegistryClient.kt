@@ -9,6 +9,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import mu.KotlinLogging
 import okhttp3.*
+import org.springframework.stereotype.Service
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
@@ -59,6 +60,7 @@ data class GitHubContainerRegistryTagsResponse(
     val tags: List<String>
 )
 
+@Service
 class DockerRegistryClient {
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
