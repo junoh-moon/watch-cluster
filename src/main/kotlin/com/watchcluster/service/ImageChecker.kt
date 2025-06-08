@@ -9,16 +9,14 @@ import io.fabric8.kubernetes.client.KubernetesClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import mu.KotlinLogging
-import org.springframework.stereotype.Service
 import java.util.Base64
 
 private val logger = KotlinLogging.logger {}
 
-@Service
 class ImageChecker(
-    private val kubernetesClient: KubernetesClient,
-    private val registryClient: DockerRegistryClient
+    private val kubernetesClient: KubernetesClient
 ) {
+    private val registryClient = DockerRegistryClient()
     private val objectMapper = ObjectMapper()
 
     suspend fun checkForUpdate(
