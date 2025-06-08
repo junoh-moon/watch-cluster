@@ -6,7 +6,7 @@ import io.fabric8.kubernetes.client.KubernetesClient
 import io.fabric8.kubernetes.client.dsl.RollableScalableResource
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
-import io.github.oshai.kotlinlogging.KotlinLogging
+import mu.KotlinLogging
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 

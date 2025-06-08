@@ -8,7 +8,7 @@ import com.watchcluster.util.ImageParser
 import io.fabric8.kubernetes.client.KubernetesClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import io.github.oshai.kotlinlogging.KotlinLogging
+import mu.KotlinLogging
 import java.util.Base64
 
 private val logger = KotlinLogging.logger {}

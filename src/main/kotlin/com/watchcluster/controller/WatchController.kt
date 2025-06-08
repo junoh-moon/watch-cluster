@@ -9,7 +9,7 @@ import io.fabric8.kubernetes.api.model.apps.Deployment
 import io.fabric8.kubernetes.client.KubernetesClient
 import io.fabric8.kubernetes.client.informers.ResourceEventHandler
 import kotlinx.coroutines.*
-import io.github.oshai.kotlinlogging.KotlinLogging
+import mu.KotlinLogging
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 

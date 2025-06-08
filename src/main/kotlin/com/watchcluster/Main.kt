@@ -4,7 +4,7 @@ import com.watchcluster.controller.WatchController
 import com.watchcluster.model.WebhookConfig
 import io.fabric8.kubernetes.client.KubernetesClientBuilder
 import kotlinx.coroutines.*
-import io.github.oshai.kotlinlogging.KotlinLogging
+import mu.KotlinLogging
 
 private val logger = KotlinLogging.logger {}
 

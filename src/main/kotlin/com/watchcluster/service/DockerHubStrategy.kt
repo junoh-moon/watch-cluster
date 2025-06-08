@@ -6,7 +6,7 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import com.watchcluster.model.DockerAuth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import io.github.oshai.kotlinlogging.KotlinLogging
+import mu.KotlinLogging
 import okhttp3.Credentials
 import okhttp3.OkHttpClient
 import okhttp3.Request
