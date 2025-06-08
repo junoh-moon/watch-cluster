@@ -20,7 +20,6 @@ repositories {
 dependencies {
     // Spring Boot starters
     implementation("org.springframework.boot:spring-boot-starter")
-    implementation("org.springframework.boot:spring-boot-starter-validation")
     
     // Jackson for Spring Boot (explicitly included for Kotlin support)
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
