@@ -24,9 +24,11 @@ class DockerHubStrategy : BaseRegistryStrategy() {
     private val mapper = jacksonObjectMapper()
     
     override suspend fun getTags(repository: String, dockerAuth: DockerAuth?): List<String> = withContext(Dispatchers.IO) {
+        logger.debug { "[DockerHub] Fetching tags for repository: $repository" }
         runCatching {
             val namespace = if (repository.contains("/")) repository else "library/$repository"
             val url = "https://hub.docker.com/v2/repositories/$namespace/tags/?page_size=100"
+            logger.debug { "[DockerHub] Using namespace: $namespace, URL: $url" }
             
             val requestBuilder = Request.Builder()
                 .url(url)
@@ -55,37 +57,42 @@ class DockerHubStrategy : BaseRegistryStrategy() {
     }
     
     override suspend fun getImageDigest(repository: String, tag: String, dockerAuth: DockerAuth?): String? = withContext(Dispatchers.IO) {
+        logger.debug { "[DockerHub] Getting image digest for $repository:$tag" }
         runCatching {
             val namespace = if (repository.contains("/")) repository else "library/$repository"
             val url = "https://hub.docker.com/v2/repositories/$namespace/tags/$tag/"
-            logger.debug { "Fetching Docker Hub digest from: $url" }
+            logger.debug { "[DockerHub] Fetching digest from: $url" }
             
             val requestBuilder = Request.Builder()
                 .url(url)
                 .get()
             
             if (dockerAuth != null) {
+                logger.debug { "[DockerHub] Using authentication for digest fetch" }
                 requestBuilder.header("Authorization", Credentials.basic(dockerAuth.username, dockerAuth.password))
+            } else {
+                logger.debug { "[DockerHub] No authentication for digest fetch" }
             }
             
             val request = requestBuilder.build()
             
             client.newCall(request).await().use { response ->
-                logger.debug { "Docker Hub response code: ${response.code}" }
+                logger.debug { "[DockerHub] Response code for digest: ${response.code}" }
                 if (!response.isSuccessful) {
-                    logger.warn { "Failed to fetch digest from Docker Hub: ${response.code}" }
+                    logger.warn { "[DockerHub] Failed to fetch digest from Docker Hub: ${response.code}" }
+                    logger.debug { "[DockerHub] Response headers: ${response.headers}" }
                     return@withContext null
                 }
                 
                 val body = response.body?.string() ?: return@withContext null
-                logger.debug { "Docker Hub response body: $body" }
+                logger.debug { "[DockerHub] Response body for digest fetch: $body" }
                 val tagInfo = mapper.readTree(body)
                 val digest = tagInfo.get("digest")?.asText()
-                logger.debug { "Extracted Docker Hub digest: $digest" }
+                logger.debug { "[DockerHub] Extracted digest for $repository:$tag -> $digest" }
                 digest
             }
         }.getOrElse { e ->
-            logger.error(e) { "Failed to fetch digest for $repository:$tag from Docker Hub" }
+            logger.error(e) { "[DockerHub] Failed to fetch digest for $repository:$tag from Docker Hub" }
             null
         }
     }
