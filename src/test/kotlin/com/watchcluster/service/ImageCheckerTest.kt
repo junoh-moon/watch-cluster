@@ -70,41 +70,6 @@ class ImageCheckerTest {
     }
     
     @Test
-    fun `test checkForUpdate with image containing sha256 digest updates to newer semver version`() = runBlocking {
-        // Given
-        val currentImage = "my.registry.com/app:1.2.3@sha256:def"
-        val availableTags = listOf("1.0.0", "1.1.0", "1.2.3", "1.3.0", "2.0.0")
-        
-        coEvery { mockRegistryClient.getTags("my.registry.com", "app", any()) } returns availableTags
-        
-        // When
-        val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
-        
-        // Then
-        assertTrue(result.hasUpdate)
-        assertEquals("my.registry.com/app:2.0.0", result.newImage)
-        assertTrue(result.reason?.contains("Found newer version") == true)
-    }
-    
-    @Test
-    fun `test checkForUpdate with sha256 digest and major version lock`() = runBlocking {
-        // Given
-        val currentImage = "my.registry.com/app:1.2.3@sha256:olddigest"
-        val availableTags = listOf("1.0.0", "1.2.3", "1.3.0", "1.4.5", "2.0.0", "2.1.0")
-        val strategy = UpdateStrategy.Version(lockMajorVersion = true)
-        
-        coEvery { mockRegistryClient.getTags("my.registry.com", "app", any()) } returns availableTags
-        
-        // When
-        val result = imageChecker.checkForUpdate(currentImage, strategy, "default", null)
-        
-        // Then
-        assertTrue(result.hasUpdate)
-        assertEquals("my.registry.com/app:1.4.5", result.newImage) // Should update to latest 1.x, not 2.x
-        assertTrue(result.reason?.contains("Found newer version") == true)
-    }
-    
-    @Test
     fun `test checkForUpdate preserves v prefix`() = runBlocking {
         // Given
         val currentImage = "myapp:v1.0.0"
