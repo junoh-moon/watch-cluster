@@ -6,11 +6,14 @@
         </encoder>
     </appender>
 
-    <logger name="com.watchcluster" level="DEBUG"/>
-    <logger name="io.fabric8.kubernetes" level="INFO"/>
-    <logger name="com.github.dockerjava" level="INFO"/>
+    <logger name="com.watchcluster" level="${LOG_LEVEL_WATCHCLUSTER:-INFO}"/>
+    <logger name="com.watchcluster.controller" level="${LOG_LEVEL_CONTROLLER:-INFO}"/>
+    <logger name="com.watchcluster.service" level="${LOG_LEVEL_SERVICE:-INFO}"/>
+    <logger name="com.watchcluster.util" level="${LOG_LEVEL_UTIL:-INFO}"/>
+    <logger name="io.fabric8.kubernetes" level="${LOG_LEVEL_KUBERNETES:-INFO}"/>
+    <logger name="com.github.dockerjava" level="${LOG_LEVEL_DOCKER:-INFO}"/>
 
-    <root level="INFO">
+    <root level="${LOG_LEVEL:-INFO}">
         <appender-ref ref="STDOUT"/>
     </root>
 </configuration>

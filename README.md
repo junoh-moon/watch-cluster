@@ -248,6 +248,33 @@ kubectl edit configmap watch-cluster-config -n watch-cluster
 }
 ```
 
+### Log Level Configuration
+
+Configure logging levels for different modules using environment variables:
+
+| Environment Variable | Description | Default |
+|---------------------|-------------|---------|
+| `LOG_LEVEL` | Root log level | INFO |
+| `LOG_LEVEL_WATCHCLUSTER` | watch-cluster module log level | INFO |
+| `LOG_LEVEL_CONTROLLER` | Controller module log level | INFO |
+| `LOG_LEVEL_SERVICE` | Service module log level | INFO |
+| `LOG_LEVEL_UTIL` | Utility module log level | INFO |
+| `LOG_LEVEL_KUBERNETES` | Kubernetes client log level | INFO |
+| `LOG_LEVEL_DOCKER` | Docker client log level | INFO |
+
+Available log levels: `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `OFF`
+
+Example configuration in deployment:
+```yaml
+env:
+- name: LOG_LEVEL
+  value: "INFO"
+- name: LOG_LEVEL_SERVICE
+  value: "DEBUG"
+- name: LOG_LEVEL_KUBERNETES
+  value: "WARN"
+```
+
 ### Monitoring and Debugging
 
 ```bash

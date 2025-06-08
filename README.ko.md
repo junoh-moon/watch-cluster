@@ -248,6 +248,33 @@ kubectl edit configmap watch-cluster-config -n watch-cluster
 }
 ```
 
+### 로그 레벨 설정
+
+환경변수를 사용하여 각 모듈별 로그 레벨을 설정할 수 있습니다:
+
+| 환경변수 | 설명 | 기본값 |
+|----------|------|--------|
+| `LOG_LEVEL` | 루트 로그 레벨 | INFO |
+| `LOG_LEVEL_WATCHCLUSTER` | watch-cluster 모듈 로그 레벨 | INFO |
+| `LOG_LEVEL_CONTROLLER` | Controller 모듈 로그 레벨 | INFO |
+| `LOG_LEVEL_SERVICE` | Service 모듈 로그 레벨 | INFO |
+| `LOG_LEVEL_UTIL` | Utility 모듈 로그 레벨 | INFO |
+| `LOG_LEVEL_KUBERNETES` | Kubernetes 클라이언트 로그 레벨 | INFO |
+| `LOG_LEVEL_DOCKER` | Docker 클라이언트 로그 레벨 | INFO |
+
+사용 가능한 로그 레벨: `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `OFF`
+
+Deployment에서 설정 예시:
+```yaml
+env:
+- name: LOG_LEVEL
+  value: "INFO"
+- name: LOG_LEVEL_SERVICE
+  value: "DEBUG"
+- name: LOG_LEVEL_KUBERNETES
+  value: "WARN"
+```
+
 ### 모니터링 및 디버깅
 
 ```bash
