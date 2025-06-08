@@ -11,16 +11,3 @@ logging:
     com.github.dockerjava: INFO
   pattern:
     console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
-  
-management:
-  health:
-    probes:
-      enabled: false
-
-
-# Application info
-info:
-  app:
-    name: watch-cluster
-    description: Kubernetes deployment image update monitor
-    version: "1.0.0"
