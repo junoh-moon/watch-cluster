@@ -91,17 +91,15 @@ class WatchController(
 			checkAndUpdateDeployment(watchedDeployment)
         }
         
-        currentScope.async {
-            webhookService.sendWebhook(WebhookEvent(
-                eventType = WebhookEventType.DEPLOYMENT_DETECTED,
-                timestamp = java.time.Instant.now().toString(),
-                deployment = DeploymentInfo(namespace, name, currentImage),
-                details = mapOf(
-                    "cronExpression" to cronExpression,
-                    "updateStrategy" to strategy.displayName
-                )
-            ))
-        }
+		webhookService.sendWebhook(WebhookEvent(
+			eventType = WebhookEventType.DEPLOYMENT_DETECTED,
+			timestamp = java.time.Instant.now().toString(),
+			deployment = DeploymentInfo(namespace, name, currentImage),
+			details = mapOf(
+				"cronExpression" to cronExpression,
+				"updateStrategy" to strategy.displayName
+			)
+		))
         
         logger.info { "Watching deployment: $key with cron: $cronExpression and strategy: $strategy" }
     }
