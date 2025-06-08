@@ -8,7 +8,7 @@ import mu.KotlinLogging
 
 private val logger = KotlinLogging.logger {}
 
-suspend fun main() = coroutineScope {
+suspend fun main() = coroutineScope<Unit> {
     logger.info { "Starting watch-cluster..." }
 
     runCatching {
