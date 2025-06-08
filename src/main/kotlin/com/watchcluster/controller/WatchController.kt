@@ -25,6 +25,8 @@ class WatchController(
     private val cronScheduler: CronScheduler,
 ) {
     private val watchedDeployments = ConcurrentHashMap<String, WatchedDeployment>()
+	private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
 
     suspend fun start() {
         logger.info { "Starting deployment watcher..." }
@@ -33,13 +35,13 @@ class WatchController(
             .inAnyNamespace()
             .inform(object : ResourceEventHandler<Deployment> {
                 override fun onAdd(deployment: Deployment) {
-                    CoroutineScope(Dispatchers.IO).launch {
+                    scope.launch {
                         handleDeployment(deployment)
                     }
                 }
 
                 override fun onUpdate(oldDeployment: Deployment, newDeployment: Deployment) {
-                    CoroutineScope(Dispatchers.IO).launch {
+                    scope.launch {
                         handleDeployment(newDeployment)
                     }
                 }
@@ -90,22 +92,18 @@ class WatchController(
         watchedDeployments[key] = watchedDeployment
         
         cronScheduler.scheduleJob(key, cronExpression) {
-            CoroutineScope(Dispatchers.IO).launch {
-                checkAndUpdateDeployment(watchedDeployment)
-            }
+			checkAndUpdateDeployment(watchedDeployment)
         }
         
-        CoroutineScope(Dispatchers.IO).launch {
-            webhookService.sendWebhook(WebhookEvent(
-                eventType = WebhookEventType.DEPLOYMENT_DETECTED,
-                timestamp = java.time.Instant.now().toString(),
-                deployment = DeploymentInfo(namespace, name, currentImage),
-                details = mapOf(
-                    "cronExpression" to cronExpression,
-                    "updateStrategy" to strategy.displayName
-                )
-            ))
-        }
+		webhookService.sendWebhook(WebhookEvent(
+			eventType = WebhookEventType.DEPLOYMENT_DETECTED,
+			timestamp = java.time.Instant.now().toString(),
+			deployment = DeploymentInfo(namespace, name, currentImage),
+			details = mapOf(
+				"cronExpression" to cronExpression,
+				"updateStrategy" to strategy.displayName
+			)
+		))
         
         logger.info { "Watching deployment: $key with cron: $cronExpression and strategy: $strategy" }
     }
@@ -161,5 +159,6 @@ class WatchController(
 
     fun stop() {
         cronScheduler.shutdown()
+		scope.cancel()
     }
 }
