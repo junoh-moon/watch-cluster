@@ -143,7 +143,6 @@ class DeploymentUpdater(
                     if (updatedReplicas == replicas && 
                         readyReplicas == replicas && 
                         availableReplicas == replicas) {
-                        logger.info { "Rollout completed successfully" }
                         
                         webhookService.sendWebhook(WebhookEvent(
                             eventType = WebhookEventType.IMAGE_ROLLOUT_COMPLETED,
@@ -151,6 +150,8 @@ class DeploymentUpdater(
                             deployment = DeploymentInfo(namespace, name, newImage),
                             details = mapOf("rolloutDuration" to "${System.currentTimeMillis() - startTime}ms")
                         ))
+
+                        logger.info { "Rollout completed successfully" }
                         
                         return
                     }

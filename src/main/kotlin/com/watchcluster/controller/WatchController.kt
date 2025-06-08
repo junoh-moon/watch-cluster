@@ -19,7 +19,6 @@ private val logger = KotlinLogging.logger {}
 
 class WatchController(
     private val kubernetesClient: KubernetesClient,
-    private val coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 ) {
     private val webhookConfig = WebhookConfig.fromEnvironment()
     private val webhookService = WebhookService(webhookConfig)
@@ -28,6 +27,7 @@ class WatchController(
     private val cronScheduler = CronScheduler()
     private val watchedDeployments = ConcurrentHashMap<String, WatchedDeployment>()
     private val deploymentMutexes = ConcurrentHashMap<String, Mutex>()
+    private val coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     suspend fun start() {
         logger.info { "Starting deployment watcher..." }

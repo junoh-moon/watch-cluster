@@ -5,11 +5,31 @@ import com.watchcluster.model.WebhookConfig
 import io.fabric8.kubernetes.client.KubernetesClientBuilder
 import kotlinx.coroutines.*
 import mu.KotlinLogging
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.system.exitProcess
 
 private val logger = KotlinLogging.logger {}
 
 suspend fun main() = coroutineScope<Unit> {
     logger.info { "Starting watch-cluster..." }
+    
+    val shutdownRequested = AtomicBoolean(false)
+    var controller: WatchController? = null
+
+    // Setup shutdown hook for graceful shutdown
+    Runtime.getRuntime().addShutdownHook(Thread {
+        logger.info { "Shutdown signal received. Initiating graceful shutdown..." }
+        shutdownRequested.set(true)
+        
+        runBlocking {
+            withTimeoutOrNull(10_000) { // 10 seconds timeout
+                controller?.stop()
+                logger.info { "Graceful shutdown completed" }
+            } ?: run {
+                logger.warn { "Graceful shutdown timed out after 10 seconds" }
+            }
+        }
+    })
 
     runCatching {
         // Load and log environment variables
@@ -61,8 +81,8 @@ suspend fun main() = coroutineScope<Unit> {
 
         logger.info { "==================================" }
 
-        val controller = WatchController(kubernetesClient)
-        controller.start()
+        controller = WatchController(kubernetesClient)
+        controller!!.start()
     }.onFailure { e ->
         logger.error(e) { "Failed to start watch-cluster" }
         throw e
