@@ -1,6 +1,8 @@
 spring:
   application:
     name: watch-cluster
+  main:
+    lazy-initialization: true
 
 logging:
   level:
