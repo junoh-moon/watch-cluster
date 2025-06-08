@@ -115,10 +115,14 @@ class ImageChecker(
     )
     
     private suspend fun parseImageForVersionUpdate(currentImage: String): ImageVersionComponents? {
+        logger.debug { "[ImageChecker] Parsing current image for version update: $currentImage" }
+        
         val components = ImageParser.parseImageString(currentImage)
         val (registry, repository, tag) = components
+        logger.debug { "[ImageChecker] Parsed image components - registry: $registry, repository: $repository, tag: $tag" }
         
         if (!ImageParser.isVersionTag(tag)) {
+            logger.debug { "[ImageChecker] Tag '$tag' is not a valid version tag, skipping version update check" }
             return null
         }
         
@@ -126,7 +130,9 @@ class ImageChecker(
         val hasVPrefix = tag.startsWith("v")
         val currentMajorVersion = currentVersion.getOrNull(0) ?: 0
         
-        return ImageVersionComponents(
+        logger.debug { "[ImageChecker] Current version details - version: $currentVersion, hasVPrefix: $hasVPrefix, majorVersion: $currentMajorVersion" }
+        
+        val result = ImageVersionComponents(
             registry = registry,
             repository = repository,
             tag = tag,
@@ -134,6 +140,9 @@ class ImageChecker(
             hasVPrefix = hasVPrefix,
             currentMajorVersion = currentMajorVersion
         )
+        
+        logger.debug { "[ImageChecker] Successfully created ImageVersionComponents for version update" }
+        return result
     }
     
     private suspend fun findBestVersionMatch(
@@ -141,26 +150,48 @@ class ImageChecker(
         strategy: UpdateStrategy.Version,
         dockerAuth: DockerAuth?
     ): VersionComparison? {
-        val availableTags = getAvailableTags(imageComponents.registry, imageComponents.repository, dockerAuth)
+        logger.debug { "[ImageChecker] Finding best version match for ${imageComponents.repository}:${imageComponents.tag}" }
+        logger.debug { "[ImageChecker] Current version: ${imageComponents.currentVersion}, lockMajorVersion: ${strategy.lockMajorVersion}" }
         
-        val newerVersions = availableTags
-            .filter { ImageParser.isVersionTag(it) }
-            .map { tagString -> tagString to ImageParser.parseVersion(tagString) }
-            .filter { (_, version) -> 
-                if (strategy.lockMajorVersion) {
-                    val candidateMajor = version.getOrNull(0) ?: 0
-                    candidateMajor == imageComponents.currentMajorVersion && 
-                        ImageParser.compareVersions(version, imageComponents.currentVersion) > 0
-                } else {
-                    ImageParser.compareVersions(version, imageComponents.currentVersion) > 0
-                }
+        val availableTags = getAvailableTags(imageComponents.registry, imageComponents.repository, dockerAuth)
+        logger.debug { "[ImageChecker] Retrieved ${availableTags.size} available tags from registry" }
+        
+        val versionTags = availableTags.filter { ImageParser.isVersionTag(it) }
+        logger.debug { "[ImageChecker] Filtered to ${versionTags.size} version tags: $versionTags" }
+        
+        val parsedVersions = versionTags.map { tagString -> 
+            val parsedVersion = ImageParser.parseVersion(tagString)
+            logger.debug { "[ImageChecker] Parsed tag '$tagString' -> version: $parsedVersion" }
+            tagString to parsedVersion
+        }
+        
+        val newerVersions = parsedVersions.filter { (tagString, version) -> 
+            val isNewer = if (strategy.lockMajorVersion) {
+                val candidateMajor = version.getOrNull(0) ?: 0
+                val isSameMajor = candidateMajor == imageComponents.currentMajorVersion
+                val isHigherVersion = ImageParser.compareVersions(version, imageComponents.currentVersion) > 0
+                logger.debug { "[ImageChecker] Tag '$tagString' - major: $candidateMajor, sameMajor: $isSameMajor, higher: $isHigherVersion" }
+                isSameMajor && isHigherVersion
+            } else {
+                val isHigherVersion = ImageParser.compareVersions(version, imageComponents.currentVersion) > 0
+                logger.debug { "[ImageChecker] Tag '$tagString' - higher version: $isHigherVersion" }
+                isHigherVersion
             }
-            .sortedWith { a, b -> ImageParser.compareVersions(b.second, a.second) }
+            logger.debug { "[ImageChecker] Tag '$tagString' is newer: $isNewer" }
+            isNewer
+        }
+        
+        logger.debug { "[ImageChecker] Found ${newerVersions.size} newer versions" }
+        
+        val sortedVersions = newerVersions.sortedWith { a, b -> ImageParser.compareVersions(b.second, a.second) }
+        logger.debug { "[ImageChecker] Sorted newer versions: ${sortedVersions.map { it.first }}" }
             
-        return if (newerVersions.isNotEmpty()) {
-            val (originalTag, parsedVersion) = newerVersions.first()
+        return if (sortedVersions.isNotEmpty()) {
+            val (originalTag, parsedVersion) = sortedVersions.first()
+            logger.debug { "[ImageChecker] Best match found: tag '$originalTag' with version $parsedVersion" }
             VersionComparison(originalTag, parsedVersion)
         } else {
+            logger.debug { "[ImageChecker] No newer versions found" }
             null
         }
     }

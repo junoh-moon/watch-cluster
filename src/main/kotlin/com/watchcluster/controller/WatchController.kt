@@ -88,9 +88,7 @@ class WatchController(
         watchedDeployments[key] = watchedDeployment
         
         cronScheduler.scheduleJob(key, cronExpression) {
-            currentScope.async {
-                checkAndUpdateDeployment(watchedDeployment)
-            }
+            checkAndUpdateDeployment(watchedDeployment)
         }
         
         currentScope.async {
@@ -112,7 +110,9 @@ class WatchController(
 
     private suspend fun checkAndUpdateDeployment(deployment: WatchedDeployment) {
         runCatching {
-            logger.info { "Checking for updates: ${deployment.namespace}/${deployment.name}" }
+            logger.debug { "[WatchController] Starting update check for: ${deployment.namespace}/${deployment.name}" }
+            logger.debug { "[WatchController] Current image: ${deployment.currentImage}" }
+            logger.debug { "[WatchController] Update strategy: ${deployment.updateStrategy}" }
             
             val updateResult = imageChecker.checkForUpdate(
                 deployment.currentImage,
