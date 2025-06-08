@@ -10,13 +10,16 @@ import io.fabric8.kubernetes.client.KubernetesClient
 import io.fabric8.kubernetes.client.informers.ResourceEventHandler
 import kotlinx.coroutines.*
 import mu.KotlinLogging
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 
 private val logger = KotlinLogging.logger {}
 
 class WatchController(
-    private val kubernetesClient: KubernetesClient
+    private val kubernetesClient: KubernetesClient,
+    private val coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 ) {
     private val webhookConfig = WebhookConfig.fromEnvironment()
     private val webhookService = WebhookService(webhookConfig)
@@ -24,23 +27,23 @@ class WatchController(
     private val deploymentUpdater = DeploymentUpdater(kubernetesClient, webhookService)
     private val cronScheduler = CronScheduler()
     private val watchedDeployments = ConcurrentHashMap<String, WatchedDeployment>()
+    private val deploymentMutexes = ConcurrentHashMap<String, Mutex>()
 
     suspend fun start() {
         logger.info { "Starting deployment watcher..." }
         
-        val currentScope = CoroutineScope(coroutineContext)
         
         kubernetesClient.apps().deployments()
             .inAnyNamespace()
             .inform(object : ResourceEventHandler<Deployment> {
                 override fun onAdd(deployment: Deployment) {
-                    currentScope.async {
+                    coroutineScope.async {
                         handleDeployment(deployment)
                     }
                 }
 
                 override fun onUpdate(oldDeployment: Deployment, newDeployment: Deployment) {
-                    currentScope.async {
+                    coroutineScope.async {
                         handleDeployment(newDeployment)
                     }
                 }
@@ -48,6 +51,7 @@ class WatchController(
                 override fun onDelete(deployment: Deployment, deletedFinalStateUnknown: Boolean) {
                     val key = "${deployment.metadata.namespace}/${deployment.metadata.name}"
                     watchedDeployments.remove(key)
+                    deploymentMutexes.remove(key)
                     cronScheduler.cancelJob(key)
                     logger.info { "Stopped watching deployment: $key" }
                 }
@@ -60,7 +64,6 @@ class WatchController(
         
         if (!enabled) return
         
-        val currentScope = CoroutineScope(coroutineContext)
         val namespace = deployment.metadata.namespace
         val name = deployment.metadata.name
         val key = "$namespace/$name"
@@ -86,6 +89,7 @@ class WatchController(
         )
         
         watchedDeployments[key] = watchedDeployment
+        deploymentMutexes.computeIfAbsent(key) { Mutex() }
         
         cronScheduler.scheduleJob(key, cronExpression) {
 			checkAndUpdateDeployment(watchedDeployment)
@@ -107,47 +111,56 @@ class WatchController(
     // parseStrategy method removed - using UpdateStrategy.fromString() directly
 
     private suspend fun checkAndUpdateDeployment(deployment: WatchedDeployment) {
-        runCatching {
-            logger.info { "Checking for updates: ${deployment.namespace}/${deployment.name}" }
-            
-            val updateResult = imageChecker.checkForUpdate(
-                deployment.currentImage,
-                deployment.updateStrategy,
-                deployment.namespace,
-                deployment.imagePullSecrets,
-                deployment.name
-            )
-            
-            when {
-                updateResult.hasUpdate -> {
-                    logger.info {
-                        buildString {
-                            append("Found update for ${deployment.namespace}/${deployment.name}: ${updateResult.newImage}")
-                            updateResult.reason?.let { append(" $it") }
+        val key = "${deployment.namespace}/${deployment.name}"
+        val mutex = deploymentMutexes[key] ?: run {
+            logger.warn { "Mutex not found for deployment $key" }
+            return
+        }
+        
+        mutex.withLock {
+            runCatching {
+                logger.info { "Checking for updates: ${deployment.namespace}/${deployment.name}" }
+                
+                val updateResult = imageChecker.checkForUpdate(
+                    deployment.currentImage,
+                    deployment.updateStrategy,
+                    deployment.namespace,
+                    deployment.imagePullSecrets,
+                    deployment.name
+                )
+                
+                when {
+                    updateResult.hasUpdate -> {
+                        logger.info {
+                            buildString {
+                                append("Found update for ${deployment.namespace}/${deployment.name}: ${updateResult.newImage}")
+                                updateResult.reason?.let { append(" $it") }
+                            }
+                        }
+                        deploymentUpdater.updateDeployment(
+                            deployment.namespace,
+                            deployment.name,
+                            updateResult.newImage!!,
+                            updateResult
+                        )
+                    }
+                    else -> {
+                        logger.debug {
+                            buildString {
+                                append("No update available for ${deployment.namespace}/${deployment.name}.")
+                                updateResult.reason?.let { append(" $it") }
+                            }
                         }
                     }
-                    deploymentUpdater.updateDeployment(
-                        deployment.namespace,
-                        deployment.name,
-                        updateResult.newImage!!,
-                        updateResult
-                    )
                 }
-                else -> {
-                    logger.debug {
-                        buildString {
-                            append("No update available for ${deployment.namespace}/${deployment.name}.")
-                            updateResult.reason?.let { append(" $it") }
-                        }
-                    }
-                }
+            }.onFailure { e ->
+                logger.error(e) {"Error checking deployment ${deployment.namespace}/${deployment.name}" }
             }
-        }.onFailure { e ->
-            logger.error(e) {"Error checking deployment ${deployment.namespace}/${deployment.name}" }
         }
     }
 
     fun stop() {
         cronScheduler.shutdown()
+        coroutineScope.cancel()
     }
 }

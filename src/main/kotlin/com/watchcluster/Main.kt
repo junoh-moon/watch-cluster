@@ -8,10 +8,7 @@ import mu.KotlinLogging
 
 private val logger = KotlinLogging.logger {}
 
-@OptIn(ExperimentalCoroutinesApi::class, DelicateCoroutinesApi::class)
-fun main() {
-    newSingleThreadContext("WatchClusterThread").use { singleThreadContext ->
-        runBlocking(singleThreadContext) {
+suspend fun main() = coroutineScope {
     logger.info { "Starting watch-cluster..." }
 
     runCatching {
@@ -64,12 +61,10 @@ fun main() {
 
         logger.info { "==================================" }
 
-            val controller = WatchController(kubernetesClient)
-            controller.start()
-        }.onFailure { e ->
-            logger.error(e) { "Failed to start watch-cluster" }
-            throw e
-        }
-        }
+        val controller = WatchController(kubernetesClient)
+        controller.start()
+    }.onFailure { e ->
+        logger.error(e) { "Failed to start watch-cluster" }
+        throw e
     }
 }
