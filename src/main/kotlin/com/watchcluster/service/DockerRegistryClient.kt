@@ -7,7 +7,7 @@ import com.watchcluster.model.DockerAuth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import mu.KotlinLogging
+import io.github.oshai.kotlinlogging.KotlinLogging
 import okhttp3.*
 import java.io.IOException
 import java.util.concurrent.TimeUnit

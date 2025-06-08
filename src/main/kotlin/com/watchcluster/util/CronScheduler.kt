@@ -5,7 +5,7 @@ import com.cronutils.model.definition.CronDefinitionBuilder
 import com.cronutils.model.time.ExecutionTime
 import com.cronutils.parser.CronParser
 import kotlinx.coroutines.*
-import mu.KotlinLogging
+import io.github.oshai.kotlinlogging.KotlinLogging
 import java.time.ZonedDateTime
 import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap

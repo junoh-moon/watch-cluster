@@ -7,7 +7,7 @@ import com.watchcluster.model.WebhookEvent
 import com.watchcluster.model.WebhookEventType
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.future.await
-import mu.KotlinLogging
+import io.github.oshai.kotlinlogging.KotlinLogging
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
