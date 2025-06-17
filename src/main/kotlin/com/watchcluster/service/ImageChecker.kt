@@ -309,10 +309,12 @@ class ImageChecker(
             // If we have deployment info, get the actual running digest from Kubernetes
             if (namespace != null && deploymentName != null) {
                 // Get the running pod's image ID - this is the source of truth
-                val podList = kubernetesClient.pods()
-                    .inNamespace(namespace)
-                    .withLabel("app", deploymentName)
-                    .list()
+                val podList = withContext(Dispatchers.IO) {
+                    kubernetesClient.pods()
+                        .inNamespace(namespace)
+                        .withLabel("app", deploymentName)
+                        .list()
+                }
                 
                 if (podList.items.isNotEmpty()) {
                     val pod = podList.items.first()
