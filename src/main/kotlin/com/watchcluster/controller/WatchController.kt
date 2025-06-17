@@ -32,30 +32,31 @@ class WatchController(
     suspend fun start() {
         logger.info { "Starting deployment watcher..." }
         
-        
-        kubernetesClient.apps().deployments()
-            .inAnyNamespace()
-            .inform(object : ResourceEventHandler<Deployment> {
-                override fun onAdd(deployment: Deployment) {
-                    coroutineScope.async {
-                        handleDeployment(deployment)
+        withContext(Dispatchers.IO) {
+            kubernetesClient.apps().deployments()
+                .inAnyNamespace()
+                .inform(object : ResourceEventHandler<Deployment> {
+                    override fun onAdd(deployment: Deployment) {
+                        coroutineScope.async {
+                            handleDeployment(deployment)
+                        }
                     }
-                }
 
-                override fun onUpdate(oldDeployment: Deployment, newDeployment: Deployment) {
-                    coroutineScope.async {
-                        handleDeployment(newDeployment)
+                    override fun onUpdate(oldDeployment: Deployment, newDeployment: Deployment) {
+                        coroutineScope.async {
+                            handleDeployment(newDeployment)
+                        }
                     }
-                }
 
-                override fun onDelete(deployment: Deployment, deletedFinalStateUnknown: Boolean) {
-                    val key = "${deployment.metadata.namespace}/${deployment.metadata.name}"
-                    watchedDeployments.remove(key)
-                    deploymentMutexes.remove(key)
-                    cronScheduler.cancelJob(key)
-                    logger.info { "Stopped watching deployment: $key" }
-                }
-            })
+                    override fun onDelete(deployment: Deployment, deletedFinalStateUnknown: Boolean) {
+                        val key = "${deployment.metadata.namespace}/${deployment.metadata.name}"
+                        watchedDeployments.remove(key)
+                        deploymentMutexes.remove(key)
+                        cronScheduler.cancelJob(key)
+                        logger.info { "Stopped watching deployment: $key" }
+                    }
+                })
+        }
     }
 
     private suspend fun handleDeployment(deployment: Deployment) {
