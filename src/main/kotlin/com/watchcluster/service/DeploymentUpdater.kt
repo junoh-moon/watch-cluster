@@ -1,6 +1,7 @@
 package com.watchcluster.service
 
 import com.watchcluster.model.*
+import com.watchcluster.util.ImageParser
 import io.fabric8.kubernetes.api.model.apps.Deployment
 import io.fabric8.kubernetes.client.KubernetesClient
 import io.fabric8.kubernetes.client.dsl.RollableScalableResource
@@ -46,7 +47,7 @@ class DeploymentUpdater(
             val imageToSet = updateResult
                 ?.newDigest
                 ?.takeIf { it.isNotBlank() }
-                ?.let { "${newImage}@${updateResult.newDigest}" }
+                ?.let { ImageParser.addDigest(newImage, it) }
                 ?: newImage
             containers[0].image = imageToSet
             

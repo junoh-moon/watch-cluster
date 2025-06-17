@@ -57,4 +57,12 @@ object ImageParser {
         }
         return 0
     }
+
+    fun removeDigest(image: String): String =
+        image.substringBefore("@")
+
+    fun addDigest(image: String, digest: String): String {
+        val imageWithoutDigest = removeDigest(image)
+        return "$imageWithoutDigest@$digest"
+    }
 }
