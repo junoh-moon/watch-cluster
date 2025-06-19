@@ -95,13 +95,12 @@ jobs:
             version_without_v=${latest_tag#v}
             IFS='.' read -ra VERSION_PARTS <<< "$version_without_v"
             
-            # Increment minor version
+            # Increment patch version
             major=${VERSION_PARTS[0]}
             minor=${VERSION_PARTS[1]}
             patch=${VERSION_PARTS[2]}
             
-            minor=$((minor + 1))
-            patch=0
+            patch=$((patch + 1))
             new_version="v${major}.${minor}.${patch}"
           fi
           
