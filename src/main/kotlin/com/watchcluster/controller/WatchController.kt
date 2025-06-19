@@ -7,8 +7,7 @@ import com.watchcluster.service.WebhookService
 import com.watchcluster.util.CronScheduler
 import io.fabric8.kubernetes.api.model.apps.Deployment
 import io.fabric8.kubernetes.client.KubernetesClient
-import io.fabric8.kubernetes.client.Watcher
-import io.fabric8.kubernetes.client.WatcherException
+import io.fabric8.kubernetes.client.informers.ResourceEventHandler
 import kotlinx.coroutines.*
 import mu.KotlinLogging
 import kotlinx.coroutines.sync.Mutex
@@ -33,60 +32,30 @@ class WatchController(
     suspend fun start() {
         logger.info { "Starting deployment watcher..." }
         
-        // Start watching in a separate coroutine to avoid blocking
-        coroutineScope.launch(Dispatchers.IO) {
-            try {
-                // First, get all existing deployments asynchronously
-                val existingDeployments = kubernetesClient.apps().deployments()
-                    .inAnyNamespace()
-                    .list()
-                    .items
-                
-                // Process existing deployments
-                existingDeployments.forEach { deployment ->
-                    launch {
-                        handleDeployment(deployment)
+        withContext(Dispatchers.IO) {
+            kubernetesClient.apps().deployments()
+                .inAnyNamespace()
+                .inform(object : ResourceEventHandler<Deployment> {
+                    override fun onAdd(deployment: Deployment) {
+                        coroutineScope.async {
+                            handleDeployment(deployment)
+                        }
                     }
-                }
-                
-                // Then start watching for changes
-                kubernetesClient.apps().deployments()
-                    .inAnyNamespace()
-                    .watch(object : io.fabric8.kubernetes.client.Watcher<Deployment> {
-                        override fun eventReceived(action: io.fabric8.kubernetes.client.Watcher.Action, deployment: Deployment) {
-                            coroutineScope.launch(Dispatchers.IO) {
-                                when (action) {
-                                    io.fabric8.kubernetes.client.Watcher.Action.ADDED,
-                                    io.fabric8.kubernetes.client.Watcher.Action.MODIFIED -> {
-                                        handleDeployment(deployment)
-                                    }
-                                    io.fabric8.kubernetes.client.Watcher.Action.DELETED -> {
-                                        val key = "${deployment.metadata.namespace}/${deployment.metadata.name}"
-                                        watchedDeployments.remove(key)
-                                        deploymentMutexes.remove(key)
-                                        cronScheduler.cancelJob(key)
-                                        logger.info { "Stopped watching deployment: $key" }
-                                    }
-                                    else -> {
-                                        logger.debug { "Received $action event for ${deployment.metadata.namespace}/${deployment.metadata.name}" }
-                                    }
-                                }
-                            }
+
+                    override fun onUpdate(oldDeployment: Deployment, newDeployment: Deployment) {
+                        coroutineScope.async {
+                            handleDeployment(newDeployment)
                         }
-                        
-                        override fun onClose(cause: io.fabric8.kubernetes.client.WatcherException?) {
-                            logger.error(cause) { "Watch closed unexpectedly" }
-                            // Restart watch after a delay
-                            coroutineScope.launch {
-                                delay(5000)
-                                logger.info { "Restarting watch..." }
-                                start()
-                            }
-                        }
-                    })
-            } catch (e: Exception) {
-                logger.error(e) { "Failed to start watch" }
-            }
+                    }
+
+                    override fun onDelete(deployment: Deployment, deletedFinalStateUnknown: Boolean) {
+                        val key = "${deployment.metadata.namespace}/${deployment.metadata.name}"
+                        watchedDeployments.remove(key)
+                        deploymentMutexes.remove(key)
+                        cronScheduler.cancelJob(key)
+                        logger.info { "Stopped watching deployment: $key" }
+                    }
+                })
         }
     }
 

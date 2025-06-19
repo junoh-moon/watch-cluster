@@ -34,9 +34,7 @@ suspend fun main() = coroutineScope<Unit> {
             "Webhook Headers: ${webhookConfig.headers.entries.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "None"}"
         }
 
-        val kubernetesClient = withContext(Dispatchers.IO) {
-            KubernetesClientBuilder().build()
-        }
+        val kubernetesClient = KubernetesClientBuilder().build()
         logger.info {
             "Connected to Kubernetes cluster: ${kubernetesClient.configuration.masterUrl}"
         }
