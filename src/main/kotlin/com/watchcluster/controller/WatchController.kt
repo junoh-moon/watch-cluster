@@ -20,7 +20,7 @@ private val logger = KotlinLogging.logger {}
 
 class WatchController(
     private val kubernetesClient: KubernetesClient,
-    private val coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private val coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 ) {
     private val webhookConfig = WebhookConfig.fromEnvironment()
     private val webhookService = WebhookService(webhookConfig)
