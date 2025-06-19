@@ -8,7 +8,7 @@ import mu.KotlinLogging
 
 private val logger = KotlinLogging.logger {}
 
-suspend fun main() = coroutineScope<Unit> {
+fun main() {
     logger.info { "Starting watch-cluster..." }
 
     runCatching {
@@ -42,18 +42,17 @@ suspend fun main() = coroutineScope<Unit> {
         // Get current pod information
         if (podName != "unknown" && podNamespace != "unknown") {
             runCatching {
-                withContext(Dispatchers.IO) {
-                    kubernetesClient.pods()
-                        .inNamespace(podNamespace)
-                        .withName(podName)
-                        .get()
-                }?.status
-                    ?.containerStatuses
-                    ?.forEach { containerStatus ->
-                        logger.info { "Container: ${containerStatus.name}" }
-                        logger.info { "  Image: ${containerStatus.image}" }
-                        logger.info { "  Image ID: ${containerStatus.imageID}" }
-                    }
+                kubernetesClient.pods()
+                    .inNamespace(podNamespace)
+                    .withName(podName)
+                    .get()
+                ?.status
+                ?.containerStatuses
+                ?.forEach { containerStatus ->
+                    logger.info { "Container: ${containerStatus.name}" }
+                    logger.info { "  Image: ${containerStatus.image}" }
+                    logger.info { "  Image ID: ${containerStatus.imageID}" }
+                }
             }.onFailure { e ->
                 logger.warn { "Failed to get pod information: ${e.message}" }
             }
@@ -63,6 +62,10 @@ suspend fun main() = coroutineScope<Unit> {
 
         val controller = WatchController(kubernetesClient)
         controller.start()
+
+        // main thread가 종료되지 않도록 block
+        Thread.currentThread().join()
+
     }.onFailure { e ->
         logger.error(e) { "Failed to start watch-cluster" }
         throw e

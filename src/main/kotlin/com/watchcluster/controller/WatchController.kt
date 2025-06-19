@@ -29,34 +29,33 @@ class WatchController(
     private val watchedDeployments = ConcurrentHashMap<String, WatchedDeployment>()
     private val deploymentMutexes = ConcurrentHashMap<String, Mutex>()
 
-    suspend fun start() {
+    fun start() {
+        val coroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
         logger.info { "Starting deployment watcher..." }
         
-        withContext(Dispatchers.IO) {
-            kubernetesClient.apps().deployments()
-                .inAnyNamespace()
-                .inform(object : ResourceEventHandler<Deployment> {
-                    override fun onAdd(deployment: Deployment) {
-                        coroutineScope.async {
-                            handleDeployment(deployment)
-                        }
+        kubernetesClient.apps().deployments()
+            .inAnyNamespace()
+            .inform(object : ResourceEventHandler<Deployment> {
+                override fun onAdd(deployment: Deployment) {
+                    coroutineScope.async {
+                        handleDeployment(deployment)
                     }
+                }
 
-                    override fun onUpdate(oldDeployment: Deployment, newDeployment: Deployment) {
-                        coroutineScope.async {
-                            handleDeployment(newDeployment)
-                        }
+                override fun onUpdate(oldDeployment: Deployment, newDeployment: Deployment) {
+                    coroutineScope.async {
+                        handleDeployment(newDeployment)
                     }
+                }
 
-                    override fun onDelete(deployment: Deployment, deletedFinalStateUnknown: Boolean) {
-                        val key = "${deployment.metadata.namespace}/${deployment.metadata.name}"
-                        watchedDeployments.remove(key)
-                        deploymentMutexes.remove(key)
-                        cronScheduler.cancelJob(key)
-                        logger.info { "Stopped watching deployment: $key" }
-                    }
-                })
-        }
+                override fun onDelete(deployment: Deployment, deletedFinalStateUnknown: Boolean) {
+                    val key = "${deployment.metadata.namespace}/${deployment.metadata.name}"
+                    watchedDeployments.remove(key)
+                    deploymentMutexes.remove(key)
+                    cronScheduler.cancelJob(key)
+                    logger.info { "Stopped watching deployment: $key" }
+                }
+            })
     }
 
     private suspend fun handleDeployment(deployment: Deployment) {
