@@ -49,15 +49,29 @@ class DeploymentUpdater(
                 ?.takeIf { it.isNotBlank() }
                 ?.let { ImageParser.addDigest(newImage, it) }
                 ?: newImage
-            containers[0].image = imageToSet
             
-            withContext(Dispatchers.IO) {
-                deploymentResource.patch(deployment)
+            // Prepare annotations for combined update
+            val timestamp = ZonedDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+            val annotationMap = mutableMapOf<String, String>()
+            annotationMap["watch-cluster.io/last-update"] = timestamp
+            annotationMap["watch-cluster.io/last-update-image"] = imageToSet
+            
+            // Add digest information if available
+            updateResult?.currentDigest?.let {
+                annotationMap["watch-cluster.io/last-update-from-digest"] = it
+            }
+            updateResult?.newDigest?.let {
+                annotationMap["watch-cluster.io/last-update-to-digest"] = it
             }
             
-            logger.info { "Successfully updated deployment $namespace/$name to image: $imageToSet" }
+            // Create combined patch JSON for both image and annotations
+            val patchJson = buildCombinedPatch(imageToSet, annotationMap)
             
-            addUpdateAnnotation(deploymentResource, imageToSet, updateResult)
+            withContext(Dispatchers.IO) {
+                deploymentResource.patch(patchJson)
+            }
+            
+            logger.info { "Successfully updated deployment $namespace/$name to image: $imageToSet with annotations" }
             
             waitForRollout(deploymentResource, namespace, name, imageToSet)
         }.onFailure { e ->
@@ -74,33 +88,31 @@ class DeploymentUpdater(
         }
     }
     
-    private suspend fun addUpdateAnnotation(deploymentResource: RollableScalableResource<Deployment>, newImage: String, updateResult: ImageUpdateResult?) {
-        runCatching {
-            val deployment = withContext(Dispatchers.IO) {
-                deploymentResource.get()
-            }
-            val annotations = deployment.metadata.annotations ?: mutableMapOf()
-            
-            // Use ISO 8601 format with local timezone
-            val timestamp = ZonedDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
-            annotations["watch-cluster.io/last-update"] = timestamp
-            annotations["watch-cluster.io/last-update-image"] = newImage
-            
-            // Add digest information if available
-            updateResult?.currentDigest?.let {
-                annotations["watch-cluster.io/last-update-from-digest"] = it
-            }
-            updateResult?.newDigest?.let {
-                annotations["watch-cluster.io/last-update-to-digest"] = it
-            }
-            
-            deployment.metadata.annotations = annotations
-            withContext(Dispatchers.IO) {
-                deploymentResource.patch(deployment)
-            }
-        }.onFailure { e ->
-            logger.warn(e) { "Failed to add update annotation" }
+    private fun buildCombinedPatch(imageToSet: String, annotations: Map<String, String>): String {
+        val annotationsJson = annotations.entries.joinToString(",\n      ") { (key, value) ->
+            "\"$key\": \"${value.replace("\"", "\\\"")}\""
         }
+        
+        return """
+        {
+          "metadata": {
+            "annotations": {
+              $annotationsJson
+            }
+          },
+          "spec": {
+            "template": {
+              "spec": {
+                "containers": [
+                  {
+                    "image": "$imageToSet"  // 첫 번째 이미지만 업데이트
+                  }
+                ]
+              }
+            }
+          }
+        }
+        """.trimIndent()
     }
     
     private suspend fun getCurrentImage(namespace: String, name: String): String {
