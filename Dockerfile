@@ -9,7 +9,7 @@ RUN gradle shadowJar --no-daemon
 
 FROM eclipse-temurin:17-jre-alpine
 ENV TZ=Asia/Seoul
-RUN apk add --no-cache tzdata
+RUN apk add --no-cache tzdata skopeo
 WORKDIR /app
 COPY --from=builder /app/build/libs/watch-cluster.jar /app/watch-cluster.jar
 USER 1000:1000

@@ -25,134 +25,76 @@ class GHCRStrategy : BaseRegistryStrategy() {
     override suspend fun getTags(repository: String, dockerAuth: DockerAuth?): List<String> = withContext(Dispatchers.IO) {
         logger.info { "GHCRStrategy.getTags called for repository: $repository, auth present: ${dockerAuth != null}" }
         runCatching {
-            // Get token (anonymous for public repos if no auth provided)
-            val token = when {
-                dockerAuth != null -> {
-                    logger.debug { "Using provided auth token for $repository" }
-                    dockerAuth.password
-                }
-                else -> {
-                    logger.debug { "Fetching anonymous token for $repository" }
-                    getAnonymousTokenForGHCR(repository)
-                }
+            // Use skopeo to list tags directly from GHCR
+            val imageRef = "docker://ghcr.io/$repository"
+            logger.debug { "Using skopeo to list tags for: $imageRef" }
+            
+            val command = mutableListOf("skopeo", "list-tags", imageRef)
+            
+            // Set authentication if provided
+            if (dockerAuth != null) {
+                logger.debug { "Adding authentication credentials for skopeo" }
+                command.addAll(listOf("--username", dockerAuth.username, "--password", dockerAuth.password))
             }
             
-            if (token == null) {
-                logger.warn { "Failed to obtain token for GitHub Container Registry for repository: $repository" }
+            val processBuilder = ProcessBuilder(command)
+            val process = processBuilder.start()
+            val output = process.inputStream.bufferedReader().readText()
+            val exitCode = process.waitFor()
+            
+            if (exitCode != 0) {
+                val errorOutput = process.errorStream.bufferedReader().readText()
+                logger.warn { "skopeo command failed for $repository with exit code $exitCode: $errorOutput" }
                 return@withContext emptyList()
             }
             
-            val url = "https://ghcr.io/v2/$repository/tags/list"
-            logger.debug { "Fetching tags from URL: $url" }
+            // Parse JSON output from skopeo
+            val jsonResponse = mapper.readTree(output)
+            val tags = jsonResponse.get("Tags")?.map { it.asText() } ?: emptyList()
             
-            val requestBuilder = Request.Builder()
-                .url(url)
-                .get()
-                .header("Authorization", "Bearer $token")
-            
-            val request = requestBuilder.build()
-            
-            client.newCall(request).await().use { response ->
-                logger.debug { "GHCR tags response code: ${response.code} for repository: $repository" }
-                if (!response.isSuccessful) {
-                    val errorBody = response.body?.string() ?: "No error body"
-                    logger.warn { "Failed to fetch tags from GitHub Container Registry for $repository: ${response.code}, body: $errorBody" }
-                    return@withContext emptyList()
-                }
-                
-                val body = response.body?.string() ?: return@withContext emptyList()
-                val tagsResponse = mapper.readValue<com.watchcluster.service.GitHubContainerRegistryTagsResponse>(body)
-                logger.info { "Successfully fetched ${tagsResponse.tags.size} tags for $repository from GHCR" }
-                tagsResponse.tags
-            }
+            logger.info { "Successfully fetched ${tags.size} tags for $repository using skopeo" }
+            tags
         }.getOrElse { e ->
-            logger.error(e) { "Failed to fetch tags for $repository from GitHub Container Registry" }
+            logger.error(e) { "Failed to fetch tags for $repository using skopeo" }
             emptyList()
         }
     }
     
     override suspend fun getImageDigest(repository: String, tag: String, dockerAuth: DockerAuth?): String? = withContext(Dispatchers.IO) {
         runCatching {
-            // Get token (anonymous for public repos if no auth provided)
-            val token = when {
-                dockerAuth != null -> dockerAuth.password
-                else -> getAnonymousTokenForGHCR(repository)
+            // Use skopeo to get image digest directly from GHCR
+            val imageRef = "docker://ghcr.io/$repository:$tag"
+            logger.debug { "Using skopeo to get digest for: $imageRef" }
+            
+            val command = mutableListOf("skopeo", "inspect", imageRef)
+            
+            // Set authentication if provided
+            if (dockerAuth != null) {
+                logger.debug { "Adding authentication credentials for skopeo" }
+                command.addAll(listOf("--username", dockerAuth.username, "--password", dockerAuth.password))
             }
             
-            if (token == null) {
-                logger.warn { "Failed to obtain token for GitHub Container Registry" }
+            val processBuilder = ProcessBuilder(command)
+            val process = processBuilder.start()
+            val output = process.inputStream.bufferedReader().readText()
+            val exitCode = process.waitFor()
+            
+            if (exitCode != 0) {
+                val errorOutput = process.errorStream.bufferedReader().readText()
+                logger.warn { "skopeo inspect command failed for $repository:$tag with exit code $exitCode: $errorOutput" }
                 return@withContext null
             }
             
-            val url = "https://ghcr.io/v2/$repository/manifests/$tag"
-            logger.debug { "Fetching GitHub Container Registry digest from: $url" }
+            // Parse JSON output from skopeo inspect to get digest
+            val jsonResponse = mapper.readTree(output)
+            val digest = jsonResponse.get("Digest")?.asText()
             
-            val requestBuilder = Request.Builder()
-                .url(url)
-                .get()
-                // Support both Docker V2 and OCI formats
-                .header("Accept", 
-                    listOf(
-                        "application/vnd.docker.distribution.manifest.v2+json",
-                        "application/vnd.docker.distribution.manifest.list.v2+json",
-                        "application/vnd.oci.image.manifest.v1+json",
-                        "application/vnd.oci.image.index.v1+json"
-                    ).joinToString(", ")
-                )
-            
-            requestBuilder.header("Authorization", "Bearer $token")
-            
-            val request = requestBuilder.build()
-            
-            client.newCall(request).await().use { response ->
-                logger.debug { "GitHub Container Registry response code: ${response.code}" }
-                if (!response.isSuccessful) {
-                    logger.warn { "Failed to fetch manifest from GitHub Container Registry: ${response.code}" }
-                    return@withContext null
-                }
-                
-                // Docker-Content-Digest header contains the digest
-                val digest = response.header("Docker-Content-Digest")
-                logger.debug { "GitHub Container Registry digest from header: $digest" }
-                digest
-            }
+            logger.debug { "Successfully got digest for $repository:$tag using skopeo: $digest" }
+            digest
         }.getOrElse { e ->
-            logger.error(e) { "Failed to fetch digest for $repository:$tag from GitHub Container Registry" }
+            logger.error(e) { "Failed to fetch digest for $repository:$tag using skopeo" }
             null
         }
     }
     
-    private suspend fun getAnonymousTokenForGHCR(repository: String): String? {
-        val tokenUrl = "https://ghcr.io/token?service=ghcr.io&scope=repository:$repository:pull"
-        logger.info { "Fetching anonymous token from: $tokenUrl" }
-        
-        val request = Request.Builder()
-            .url(tokenUrl)
-            .get()
-            .build()
-        
-        return runCatching {
-            client.newCall(request).await().use { response ->
-                logger.debug { "Anonymous token response code: ${response.code} for repository: $repository" }
-                if (!response.isSuccessful) {
-                    val errorBody = response.body?.string() ?: "No error body"
-                    logger.warn { "Failed to fetch anonymous token for $repository: ${response.code}, body: $errorBody" }
-                    return null
-                }
-                
-                val body = response.body?.string() ?: return null
-                val tokenResponse = mapper.readTree(body)
-                val token = tokenResponse.get("token")?.asText()
-                if (token != null) {
-                    logger.info { "Successfully obtained anonymous token for $repository (token length: ${token.length})" }
-                } else {
-                    logger.warn { "Token field was null in response for $repository" }
-                }
-                token
-            }
-        }.getOrElse { e ->
-            logger.error(e) { "Error fetching anonymous token for $repository" }
-            null
-        }
-    }
 }
