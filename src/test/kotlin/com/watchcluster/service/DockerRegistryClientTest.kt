@@ -15,21 +15,27 @@ class DockerRegistryClientTest {
     
     private lateinit var mockClient: OkHttpClient
     private lateinit var mockCall: okhttp3.Call
+    private lateinit var mockGHCRStrategy: GHCRStrategy
     private lateinit var registryClient: DockerRegistryClient
     
     @BeforeEach
     fun setup() {
         mockClient = mockk()
         mockCall = mockk()
+        mockGHCRStrategy = mockk()
         
         // Mock the extension function
         mockkStatic("com.watchcluster.service.DockerRegistryClientKt")
         
-        // Create DockerRegistryClient with mocked OkHttpClient
+        // Create DockerRegistryClient with mocked OkHttpClient and GHCRStrategy
         registryClient = DockerRegistryClient().also {
             val clientField = it::class.java.getDeclaredField("client")
             clientField.isAccessible = true
             clientField.set(it, mockClient)
+            
+            val ghcrStrategyField = it::class.java.getDeclaredField("ghcrStrategy")
+            ghcrStrategyField.isAccessible = true
+            ghcrStrategyField.set(it, mockGHCRStrategy)
         }
     }
     
@@ -184,28 +190,17 @@ class DockerRegistryClientTest {
     fun `test getGitHubContainerRegistryTags with valid response`() = runBlocking {
         // Given
         val repository = "owner/repo"
-        val responseBody = """
-            {
-                "tags": ["v1.0.0", "v1.1.0", "v2.0.0", "latest"]
-            }
-        """.trimIndent()
+        val expectedTags = listOf("v1.0.0", "v1.1.0", "v2.0.0", "latest")
         
-        val response = Response.Builder()
-            .request(Request.Builder().url("http://test").build())
-            .protocol(Protocol.HTTP_1_1)
-            .code(200)
-            .message("OK")
-            .body(responseBody.toResponseBody("application/json".toMediaType()))
-            .build()
-        
-        every { mockClient.newCall(any()) } returns mockCall
-        coEvery { mockCall.await() } returns response
+        // Mock GHCRStrategy to return expected tags
+        coEvery { mockGHCRStrategy.getTags(repository, null) } returns expectedTags
         
         // When
         val tags = registryClient.getTags("ghcr.io", repository)
         
         // Then
-        assertEquals(listOf("v1.0.0", "v1.1.0", "v2.0.0", "latest"), tags)
+        assertEquals(expectedTags, tags)
+        coVerify { mockGHCRStrategy.getTags(repository, null) }
     }
     
     @Test
@@ -214,41 +209,16 @@ class DockerRegistryClientTest {
         val repository = "owner/repo"
         val tag = "v1.0.0"
         val expectedDigest = "sha256:abc123def456"
-        val anonymousToken = "anonymous-token-123"
         
-        // Mock anonymous token response
-        val tokenResponse = Response.Builder()
-            .request(Request.Builder().url("http://test").build())
-            .protocol(Protocol.HTTP_1_1)
-            .code(200)
-            .message("OK")
-            .body("{\"token\":\"$anonymousToken\"}".toResponseBody("application/json".toMediaType()))
-            .build()
-        
-        // Mock manifest response
-        val manifestResponse = Response.Builder()
-            .request(Request.Builder().url("http://test").build())
-            .protocol(Protocol.HTTP_1_1)
-            .code(200)
-            .message("OK")
-            .header("Docker-Content-Digest", expectedDigest)
-            .body("{}".toResponseBody("application/json".toMediaType()))
-            .build()
-        
-        val mockTokenCall = mockk<okhttp3.Call>()
-        val mockManifestCall = mockk<okhttp3.Call>()
-        
-        every { mockClient.newCall(match { it.url.toString().contains("/token") }) } returns mockTokenCall
-        coEvery { mockTokenCall.await() } returns tokenResponse
-        
-        every { mockClient.newCall(match { it.url.toString().contains("/manifests/") }) } returns mockManifestCall
-        coEvery { mockManifestCall.await() } returns manifestResponse
+        // Mock GHCRStrategy to return expected digest
+        coEvery { mockGHCRStrategy.getImageDigest(repository, tag, null) } returns expectedDigest
         
         // When
         val digest = registryClient.getImageDigest("ghcr.io", repository, tag)
         
         // Then
         assertEquals(expectedDigest, digest)
+        coVerify { mockGHCRStrategy.getImageDigest(repository, tag, null) }
     }
     
     @Test
@@ -256,22 +226,15 @@ class DockerRegistryClientTest {
         // Given
         val repository = "owner/repo"
         
-        val response = Response.Builder()
-            .request(Request.Builder().url("http://test").build())
-            .protocol(Protocol.HTTP_1_1)
-            .code(401)
-            .message("Unauthorized")
-            .body("Unauthorized".toResponseBody("text/plain".toMediaType()))
-            .build()
-        
-        every { mockClient.newCall(any()) } returns mockCall
-        coEvery { mockCall.await() } returns response
+        // Mock GHCRStrategy to return empty list on authentication error
+        coEvery { mockGHCRStrategy.getTags(repository, null) } returns emptyList()
         
         // When
         val tags = registryClient.getTags("ghcr.io", repository)
         
         // Then
         assertTrue(tags.isEmpty())
+        coVerify { mockGHCRStrategy.getTags(repository, null) }
     }
     
     @Test

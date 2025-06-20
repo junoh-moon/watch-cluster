@@ -66,13 +66,24 @@ class DockerRegistryClient {
         .build()
     
     private val mapper = jacksonObjectMapper()
+    private val ghcrStrategy = GHCRStrategy()
     
     suspend fun getTags(registry: String?, repository: String, dockerAuth: DockerAuth? = null): List<String> = withContext(Dispatchers.IO) {
+        logger.info { "Fetching tags for repository: $repository from registry: $registry" }
         runCatching {
             when {
-                registry == null || registry == "docker.io" -> getDockerHubTags(repository, dockerAuth)
-                registry.contains("ghcr.io") -> getGitHubContainerRegistryTags(repository, dockerAuth)
-                else -> getGenericRegistryTags(registry, repository, dockerAuth)
+                registry == null || registry == "docker.io" -> {
+                    logger.debug { "Using Docker Hub strategy for $repository" }
+                    getDockerHubTags(repository, dockerAuth)
+                }
+                registry.contains("ghcr.io") -> {
+                    logger.debug { "Using GitHub Container Registry strategy for $repository" }
+                    getGitHubContainerRegistryTags(repository, dockerAuth)
+                }
+                else -> {
+                    logger.debug { "Using generic registry strategy for $repository" }
+                    getGenericRegistryTags(registry, repository, dockerAuth)
+                }
             }
         }.getOrElse { e ->
             logger.error(e) { "Failed to fetch tags for $repository from $registry" }
@@ -132,28 +143,8 @@ class DockerRegistryClient {
     }
     
     private suspend fun getGitHubContainerRegistryTags(repository: String, dockerAuth: DockerAuth?): List<String> {
-        val url = "https://ghcr.io/v2/$repository/tags/list"
-        
-        val requestBuilder = Request.Builder()
-            .url(url)
-            .get()
-        
-        if (dockerAuth != null) {
-            requestBuilder.header("Authorization", "Bearer ${dockerAuth.password}")
-        }
-        
-        val request = requestBuilder.build()
-        
-        client.newCall(request).await().use { response ->
-            if (!response.isSuccessful) {
-                logger.warn { "Failed to fetch tags from GitHub Container Registry: ${response.code}" }
-                return emptyList()
-            }
-            
-            val body = response.body?.string() ?: return emptyList()
-            val tagsResponse = mapper.readValue<GitHubContainerRegistryTagsResponse>(body)
-            return tagsResponse.tags
-        }
+        logger.info { "Delegating to GHCRStrategy for repository: $repository, auth present: ${dockerAuth != null}" }
+        return ghcrStrategy.getTags(repository, dockerAuth)
     }
     
     private suspend fun getGenericRegistryTags(registry: String, repository: String, dockerAuth: DockerAuth?): List<String> {
@@ -213,78 +204,10 @@ class DockerRegistryClient {
     }
     
     private suspend fun getGitHubContainerRegistryDigest(repository: String, tag: String, dockerAuth: DockerAuth?): String? {
-        // Get token (anonymous for public repos if no auth provided)
-        val token = when {
-            dockerAuth != null -> dockerAuth.password
-            else -> getAnonymousTokenForGHCR(repository)
-        }
-        
-        if (token == null) {
-            logger.warn { "Failed to obtain token for GitHub Container Registry" }
-            return null
-        }
-        
-        val url = "https://ghcr.io/v2/$repository/manifests/$tag"
-        logger.debug { "Fetching GitHub Container Registry digest from: $url" }
-        
-        val requestBuilder = Request.Builder()
-            .url(url)
-            .get()
-            // Support both Docker V2 and OCI formats
-            .header("Accept", 
-                listOf(
-                    "application/vnd.docker.distribution.manifest.v2+json",
-                    "application/vnd.docker.distribution.manifest.list.v2+json",
-                    "application/vnd.oci.image.manifest.v1+json",
-                    "application/vnd.oci.image.index.v1+json"
-                ).joinToString(", ")
-            )
-        
-        requestBuilder.header("Authorization", "Bearer $token")
-        
-        val request = requestBuilder.build()
-        
-        client.newCall(request).await().use { response ->
-            logger.debug { "GitHub Container Registry response code: ${response.code}" }
-            if (!response.isSuccessful) {
-                logger.warn { "Failed to fetch manifest from GitHub Container Registry: ${response.code}" }
-                return null
-            }
-            
-            // Docker-Content-Digest header contains the digest
-            val digest = response.header("Docker-Content-Digest")
-            logger.debug { "GitHub Container Registry digest from header: $digest" }
-            return digest
-        }
+        logger.info { "Delegating to GHCRStrategy for digest: $repository:$tag, auth present: ${dockerAuth != null}" }
+        return ghcrStrategy.getImageDigest(repository, tag, dockerAuth)
     }
     
-    private suspend fun getAnonymousTokenForGHCR(repository: String): String? {
-        val tokenUrl = "https://ghcr.io/token?scope=repository:$repository:pull"
-        logger.debug { "Fetching anonymous token for repository: $repository" }
-        
-        val request = Request.Builder()
-            .url(tokenUrl)
-            .get()
-            .build()
-        
-        return runCatching {
-            client.newCall(request).await().use { response ->
-                if (!response.isSuccessful) {
-                    logger.warn { "Failed to fetch anonymous token: ${response.code}" }
-                    return null
-                }
-                
-                val body = response.body?.string() ?: return null
-                val tokenResponse = mapper.readTree(body)
-                val token = tokenResponse.get("token")?.asText()
-                logger.debug { "Successfully obtained anonymous token" }
-                token
-            }
-        }.getOrElse { e ->
-            logger.error(e) { "Error fetching anonymous token" }
-            null
-        }
-    }
     
     private suspend fun getGenericRegistryDigest(registry: String, repository: String, tag: String, dockerAuth: DockerAuth?): String? {
         val url = "https://$registry/v2/$repository/manifests/$tag"
