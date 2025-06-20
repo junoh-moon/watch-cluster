@@ -54,15 +54,8 @@ class DeploymentUpdater(
             val timestamp = ZonedDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
             val annotationMap = mutableMapOf<String, String>()
             annotationMap["watch-cluster.io/last-update"] = timestamp
-            annotationMap["watch-cluster.io/last-update-image"] = imageToSet
+            annotationMap["watch-cluster.io/change"] = "$previousImage -> $imageToSet"
             
-            // Add digest information if available
-            updateResult?.currentDigest?.let {
-                annotationMap["watch-cluster.io/last-update-from-digest"] = it
-            }
-            updateResult?.newDigest?.let {
-                annotationMap["watch-cluster.io/last-update-to-digest"] = it
-            }
             
             // Create combined patch JSON for both image and annotations
             val patchJson = buildCombinedPatch(imageToSet, annotationMap)
