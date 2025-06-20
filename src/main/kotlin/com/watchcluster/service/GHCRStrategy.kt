@@ -24,15 +24,23 @@ class GHCRStrategy : BaseRegistryStrategy() {
     
     override suspend fun getTags(repository: String, dockerAuth: DockerAuth?): List<String> = withContext(Dispatchers.IO) {
         runCatching {
+            // Get token (anonymous for public repos if no auth provided)
+            val token = when {
+                dockerAuth != null -> dockerAuth.password
+                else -> getAnonymousTokenForGHCR(repository)
+            }
+            
+            if (token == null) {
+                logger.warn { "Failed to obtain token for GitHub Container Registry" }
+                return@withContext emptyList()
+            }
+            
             val url = "https://ghcr.io/v2/$repository/tags/list"
             
             val requestBuilder = Request.Builder()
                 .url(url)
                 .get()
-            
-            if (dockerAuth != null) {
-                requestBuilder.header("Authorization", "Bearer ${dockerAuth.password}")
-            }
+                .header("Authorization", "Bearer $token")
             
             val request = requestBuilder.build()
             
@@ -104,7 +112,7 @@ class GHCRStrategy : BaseRegistryStrategy() {
     }
     
     private suspend fun getAnonymousTokenForGHCR(repository: String): String? {
-        val tokenUrl = "https://ghcr.io/token?scope=repository:$repository:pull"
+        val tokenUrl = "https://ghcr.io/token?service=ghcr.io&scope=repository:$repository:pull"
         logger.debug { "Fetching anonymous token for repository: $repository" }
         
         val request = Request.Builder()
