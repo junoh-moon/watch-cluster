@@ -7,9 +7,11 @@ import io.fabric8.kubernetes.client.KubernetesClient
 import io.fabric8.kubernetes.client.dsl.RollableScalableResource
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import mu.KotlinLogging
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.Executors
 
 private val logger = KotlinLogging.logger {}
 
@@ -17,6 +19,11 @@ class DeploymentUpdater(
     private val kubernetesClient: KubernetesClient,
     private val webhookService: WebhookService
 ) {
+    private val k8sThreadPool = Executors.newFixedThreadPool(
+        maxOf(4, Runtime.getRuntime().availableProcessors())
+    )
+    private val k8sDispatcher = k8sThreadPool.asCoroutineDispatcher()
+
     suspend fun updateDeployment(namespace: String, name: String, newImage: String, updateResult: ImageUpdateResult? = null) {
         runCatching {
             logger.info { "Updating deployment $namespace/$name with new image: $newImage" }
@@ -34,7 +41,7 @@ class DeploymentUpdater(
                 .inNamespace(namespace)
                 .withName(name)
             
-            val deployment = withContext(Dispatchers.IO) {
+            val deployment = withContext(k8sDispatcher) {
                 deploymentResource.get()
             } ?: throw IllegalStateException("Deployment $namespace/$name not found")
             
@@ -60,7 +67,7 @@ class DeploymentUpdater(
             // Create combined patch JSON for both image and annotations
             val patchJson = buildCombinedPatch(imageToSet, annotationMap)
             
-            withContext(Dispatchers.IO) {
+            withContext(k8sDispatcher) {
                 deploymentResource.patch(patchJson)
             }
             
@@ -110,7 +117,7 @@ class DeploymentUpdater(
     
     private suspend fun getCurrentImage(namespace: String, name: String): String {
         return runCatching {
-            val deployment = withContext(Dispatchers.IO) {
+            val deployment = withContext(k8sDispatcher) {
                 kubernetesClient.apps()
                     .deployments()
                     .inNamespace(namespace)
@@ -135,7 +142,7 @@ class DeploymentUpdater(
             val startTime = System.currentTimeMillis()
             
             while (System.currentTimeMillis() - startTime < timeout) {
-                val deployment = withContext(Dispatchers.IO) {
+                val deployment = withContext(k8sDispatcher) {
                     deploymentResource.get()
                 }
                 val status = deployment.status
@@ -177,5 +184,10 @@ class DeploymentUpdater(
         }.onFailure { e ->
             logger.warn(e) { "Error waiting for rollout" }
         }
+    }
+    
+    fun shutdown() {
+        k8sDispatcher.close()
+        k8sThreadPool.shutdown()
     }
 }

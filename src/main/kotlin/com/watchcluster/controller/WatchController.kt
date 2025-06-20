@@ -166,6 +166,8 @@ class WatchController(
 
     fun stop() {
         cronScheduler.shutdown()
+        imageChecker.shutdown()
+        deploymentUpdater.shutdown()
         coroutineScope.cancel()
     }
 }

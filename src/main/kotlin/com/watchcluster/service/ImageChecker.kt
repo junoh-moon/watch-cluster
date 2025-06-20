@@ -7,9 +7,11 @@ import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.util.ImageParser
 import io.fabric8.kubernetes.client.KubernetesClient
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
 import mu.KotlinLogging
 import java.util.Base64
+import java.util.concurrent.Executors
 
 private val logger = KotlinLogging.logger {}
 
@@ -18,6 +20,11 @@ class ImageChecker(
 ) {
     private val registryClient = DockerRegistryClient()
     private val objectMapper = ObjectMapper()
+    
+    private val k8sThreadPool = Executors.newFixedThreadPool(
+        maxOf(4, Runtime.getRuntime().availableProcessors())
+    )
+    private val k8sDispatcher = k8sThreadPool.asCoroutineDispatcher()
 
     suspend fun checkForUpdate(
         currentImage: String, 
@@ -49,7 +56,7 @@ class ImageChecker(
         
         for (secretName in secretNames) {
             runCatching {
-                val secret = withContext(Dispatchers.IO) {
+                val secret = withContext(k8sDispatcher) {
                     kubernetesClient.secrets()
                         .inNamespace(namespace)
                         .withName(secretName)
@@ -309,7 +316,7 @@ class ImageChecker(
             // If we have deployment info, get the actual running digest from Kubernetes
             if (namespace != null && deploymentName != null) {
                 // Get the running pod's image ID - this is the source of truth
-                val podList = withContext(Dispatchers.IO) {
+                val podList = withContext(k8sDispatcher) {
                     kubernetesClient.pods()
                         .inNamespace(namespace)
                         .withLabel("app", deploymentName)
@@ -337,5 +344,10 @@ class ImageChecker(
             logger.error(e) { "Error getting current image digest for $image" }
             null
         }
+    }
+    
+    fun shutdown() {
+        k8sDispatcher.close()
+        k8sThreadPool.shutdown()
     }
 }
