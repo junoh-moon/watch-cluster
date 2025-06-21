@@ -156,31 +156,62 @@ class DeploymentUpdater(
                 val status = deployment.status
                 
                 if (status != null) {
+                    // Check if controller has observed the latest generation
+                    val generationMatch = status.observedGeneration == deployment.metadata.generation
+                    if (!generationMatch) {
+                        logger.debug { "Waiting for controller to observe generation ${deployment.metadata.generation} (current: ${status.observedGeneration})" }
+                        kotlinx.coroutines.delay(2000)
+                        continue
+                    }
+                    
+                    // Check deployment conditions
+                    val conditions = status.conditions ?: emptyList()
+                    val progressingCondition = conditions.find { it.type == "Progressing" }
+                    val availableCondition = conditions.find { it.type == "Available" }
+                    
+                    val isProgressing = progressingCondition?.status == "True"
+                    val isAvailable = availableCondition?.status == "True"
+                    val isComplete = progressingCondition?.reason == "NewReplicaSetAvailable"
+                    
+                    // Check replica counts
                     val replicas = deployment.spec.replicas ?: 1
                     val updatedReplicas = status.updatedReplicas ?: 0
                     val readyReplicas = status.readyReplicas ?: 0
                     val availableReplicas = status.availableReplicas ?: 0
                     
-                    if (updatedReplicas == replicas && 
-                        readyReplicas == replicas && 
-                        availableReplicas == replicas) {
-                        logger.info { "Rollout completed successfully" }
+                    // Check if all replicas are updated and ready
+                    val replicasReady = updatedReplicas == replicas && 
+                                       readyReplicas == replicas && 
+                                       availableReplicas == replicas
+                    
+                    if (replicasReady && isAvailable && isComplete) {
+                        // Verify actual pod images
+                        val allPodsUpdated = verifyPodImages(deployment, namespace, newImage)
                         
-                        webhookService.sendWebhook(WebhookEvent(
-                            eventType = WebhookEventType.IMAGE_ROLLOUT_COMPLETED,
-                            timestamp = java.time.Instant.now().toString(),
-                            deployment = DeploymentInfo(namespace, name, newImage),
-                            details = mapOf("rolloutDuration" to "${System.currentTimeMillis() - startTime}ms")
-                        ))
-                        
-                        return
+                        if (allPodsUpdated) {
+                            logger.info { "Rollout completed successfully - all pods running image: $newImage" }
+                            
+                            webhookService.sendWebhook(WebhookEvent(
+                                eventType = WebhookEventType.IMAGE_ROLLOUT_COMPLETED,
+                                timestamp = java.time.Instant.now().toString(),
+                                deployment = DeploymentInfo(namespace, name, newImage),
+                                details = mapOf("rolloutDuration" to "${System.currentTimeMillis() - startTime}ms")
+                            ))
+                            
+                            return
+                        } else {
+                            logger.debug { "Waiting for all pods to update to new image" }
+                        }
                     }
                     
                     logger.debug { 
                         listOf(
-                            "Rollout progress - Updated: $updatedReplicas/$replicas",
-                            "Ready: $readyReplicas/$replicas",
-                            "Available: $availableReplicas/$replicas"
+                            "Rollout progress - Generation: ${status.observedGeneration}/${deployment.metadata.generation}",
+                            "Updated: $updatedReplicas/$replicas",
+                            "Ready: $readyReplicas/$replicas", 
+                            "Available: $availableReplicas/$replicas",
+                            "Progressing: $isProgressing (${progressingCondition?.reason})",
+                            "Available: ${availableCondition?.status}"
                         ).joinToString(", ")
                     }
                 }
@@ -188,9 +219,46 @@ class DeploymentUpdater(
                 kotlinx.coroutines.delay(5000)
             }
             
-            logger.warn { "Rollout timeout after \\${timeout/1000} seconds" }
+            logger.warn { "Rollout timeout after ${timeout/1000} seconds" }
         }.onFailure { e ->
             logger.warn(e) { "Error waiting for rollout" }
+        }
+    }
+    
+    private suspend fun verifyPodImages(deployment: Deployment, namespace: String, expectedImage: String): Boolean {
+        return runCatching {
+            val pods = withContext(k8sDispatcher) {
+                kubernetesClient.pods()
+                    .inNamespace(namespace)
+                    .withLabels(deployment.spec.selector.matchLabels)
+                    .list()
+                    .items
+            }
+            
+            if (pods.isEmpty()) {
+                logger.warn { "No pods found for deployment $namespace/${deployment.metadata.name}" }
+                return false
+            }
+            
+            val allPodsUpdated = pods.all { pod ->
+                val podReady = pod.status?.conditions?.find { it.type == "Ready" }?.status == "True"
+                val containerImages = pod.spec?.containers?.map { it.image } ?: emptyList()
+                val hasCorrectImage = containerImages.any { image ->
+                    image == expectedImage
+                }
+                
+                if (!hasCorrectImage) {
+                    logger.debug { "Pod ${pod.metadata.name} has images: $containerImages, expected: $expectedImage" }
+                }
+                
+                podReady && hasCorrectImage
+            }
+            
+            logger.debug { "Pod image verification: ${pods.size} pods checked, all updated: $allPodsUpdated" }
+            allPodsUpdated
+        }.getOrElse { e ->
+            logger.error(e) { "Failed to verify pod images" }
+            false
         }
     }
     
