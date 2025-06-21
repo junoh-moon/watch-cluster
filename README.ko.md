@@ -178,28 +178,14 @@ annotations:
 
 ## 고급 사용법
 
-### 특정 네임스페이스만 모니터링
-
-Deployment 환경변수로 네임스페이스를 제한할 수 있습니다:
-
-```yaml
-env:
-- name: WATCH_NAMESPACES
-  value: "default,production"
-```
-
 ### 업데이트 후 상태 확인
 
 업데이트가 수행되면 deployment에 다음 annotation이 추가됩니다:
 
 ```yaml
 watch-cluster.io/last-update: "2024-01-01T12:00:00+09:00"  # ISO 8601 형식 (로컬 시간대)
-watch-cluster.io/last-update-image: "myapp:1.0.1"
-watch-cluster.io/last-update-from-digest: "sha256:abc123..."  # 업데이트 전 다이제스트
-watch-cluster.io/last-update-to-digest: "sha256:def456..."    # 업데이트 후 다이제스트
+watch-cluster.io/change: "myapp:1.0.0 -> myapp:1.0.1"      # 이미지 변경 내역
 ```
-
-특히 `latest` 태그를 사용하는 경우, 다이제스트 정보를 통해 실제 이미지가 변경되었는지 확인할 수 있습니다.
 
 ### 웹훅 설정
 

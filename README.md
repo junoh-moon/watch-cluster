@@ -178,28 +178,14 @@ Detects actual changes by comparing image digests. Supports tags like:
 
 ## Advanced Usage
 
-### Monitor Specific Namespaces Only
-
-Limit namespaces via Deployment environment variables:
-
-```yaml
-env:
-- name: WATCH_NAMESPACES
-  value: "default,production"
-```
-
 ### Check Status After Update
 
 After an update is performed, the following annotations are added to the deployment:
 
 ```yaml
 watch-cluster.io/last-update: "2024-01-01T12:00:00+09:00"  # ISO 8601 format (local timezone)
-watch-cluster.io/last-update-image: "myapp:1.0.1"
-watch-cluster.io/last-update-from-digest: "sha256:abc123..."  # Digest before update
-watch-cluster.io/last-update-to-digest: "sha256:def456..."    # Digest after update
+watch-cluster.io/change: "myapp:1.0.0 -> myapp:1.0.1"      # Image change details
 ```
-
-Especially when using the `latest` tag, digest information confirms if the actual image has changed.
 
 ### Webhook Configuration
 
