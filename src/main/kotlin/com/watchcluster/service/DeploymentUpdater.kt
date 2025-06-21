@@ -50,6 +50,9 @@ class DeploymentUpdater(
                 throw IllegalStateException("No containers found in deployment $namespace/$name")
             }
             
+            // Get the first container's name (or find the appropriate container)
+            val containerName = containers[0].name
+            
             // digest가 있으면 명시적으로 붙여서 배포
             val imageToSet = updateResult
                 ?.newDigest
@@ -65,13 +68,15 @@ class DeploymentUpdater(
             
             
             // Create combined patch JSON for both image and annotations
-            val patchJson = buildCombinedPatch(imageToSet, annotationMap)
+            val patchJson = buildCombinedPatch(containerName to imageToSet, annotationMap )
             
             withContext(k8sDispatcher) {
                 deploymentResource.patch(patchJson)
-            }
-            
-            logger.info { "Successfully updated deployment $namespace/$name to image: $imageToSet with annotations" }
+            }?.let { logger.info { "Patch successful - deployment $namespace/$name updated with new image: $imageToSet" } }
+			?: run {
+                logger.error { "Patch returned null response for deployment $namespace/$name" }
+                throw IllegalStateException("Patch operation returned null deployment")
+			}
             
             waitForRollout(deploymentResource, namespace, name, imageToSet)
         }.onFailure { e ->
@@ -88,10 +93,12 @@ class DeploymentUpdater(
         }
     }
     
-    private fun buildCombinedPatch(imageToSet: String, annotations: Map<String, String>): String {
+    private fun buildCombinedPatch(containerImage: Pair<String, String>, annotations: Map<String, String>): String {
         val annotationsJson = annotations.entries.joinToString(",\n      ") { (key, value) ->
             "\"$key\": \"${value.replace("\"", "\\\"")}\""
         }
+
+		val (containerName, imageToSet) = containerImage
         
         return """
         {
@@ -105,7 +112,8 @@ class DeploymentUpdater(
               "spec": {
                 "containers": [
                   {
-                    "image": "$imageToSet"  // 첫 번째 이미지만 업데이트
+                    "name": "$containerName",
+                    "image": "$imageToSet"
                   }
                 ]
               }
