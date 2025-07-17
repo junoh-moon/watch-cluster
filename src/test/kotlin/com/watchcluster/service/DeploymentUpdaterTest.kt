@@ -1,17 +1,8 @@
 package com.watchcluster.service
 
 import com.watchcluster.model.*
-import io.fabric8.kubernetes.api.model.Container
-import io.fabric8.kubernetes.api.model.PodSpec
-import io.fabric8.kubernetes.api.model.PodTemplateSpec
-import io.fabric8.kubernetes.api.model.apps.Deployment
-import io.fabric8.kubernetes.api.model.apps.DeploymentSpec
-import io.fabric8.kubernetes.api.model.apps.DeploymentStatus
-import io.fabric8.kubernetes.client.KubernetesClient
-import io.fabric8.kubernetes.client.dsl.AppsAPIGroupDSL
-import io.fabric8.kubernetes.client.dsl.MixedOperation
-import io.fabric8.kubernetes.client.dsl.RollableScalableResource
-import io.fabric8.kubernetes.api.model.apps.DeploymentList
+import com.watchcluster.client.K8sClient
+import com.watchcluster.client.domain.*
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.Dispatchers
@@ -21,16 +12,16 @@ import kotlin.test.*
 
 class DeploymentUpdaterTest {
     
-    private lateinit var mockKubernetesClient: KubernetesClient
+    private lateinit var mockK8sClient: K8sClient
     private lateinit var mockWebhookService: WebhookService
     private lateinit var deploymentUpdater: DeploymentUpdater
     
     @BeforeEach
     fun setup() {
-        mockKubernetesClient = mockk(relaxed = true)
+        mockK8sClient = mockk(relaxed = true)
         mockWebhookService = mockk(relaxed = true)
         
-        deploymentUpdater = DeploymentUpdater(mockKubernetesClient, mockWebhookService)
+        deploymentUpdater = DeploymentUpdater(mockK8sClient, mockWebhookService)
     }
     
     @Test
@@ -62,7 +53,7 @@ class DeploymentUpdaterTest {
         val name = "test-deployment"
         val image = "nginx:1.21.0"
         
-        val deploymentInfo = DeploymentInfo(namespace, name, image)
+        val deploymentInfo = DeploymentEventData(namespace, name, image)
         
         val webhookEvent = WebhookEvent(
             eventType = WebhookEventType.IMAGE_ROLLOUT_STARTED,
@@ -133,5 +124,187 @@ class DeploymentUpdaterTest {
         val timeoutTime = startTime + timeout + 1000L // 1 second past timeout
         val hasTimedOutNow = timeoutTime - startTime >= timeout
         assertTrue(hasTimedOutNow) // Should have timed out
+    }
+    
+    @Test
+    fun `test updateDeployment with successful rollout`() = runBlocking {
+        // Given
+        val namespace = "test-namespace"
+        val name = "test-deployment"
+        val newImage = "nginx:1.21.0"
+        val currentImage = "nginx:1.20.0"
+        
+        val deployment = com.watchcluster.client.domain.DeploymentInfo(
+            namespace = namespace,
+            name = name,
+            generation = 1,
+            replicas = 1,
+            selector = mapOf("app" to name),
+            containers = listOf(ContainerInfo("nginx", currentImage)),
+            imagePullSecrets = emptyList(),
+            annotations = mapOf(),
+            status = DeploymentStatus(
+                observedGeneration = 1,
+                updatedReplicas = 1,
+                readyReplicas = 1,
+                availableReplicas = 1,
+                conditions = listOf(
+                    DeploymentCondition("Progressing", "True", reason = "NewReplicaSetAvailable"),
+                    DeploymentCondition("Available", "True")
+                )
+            )
+        )
+        
+        coEvery { mockK8sClient.getDeployment(namespace, name) } returns deployment
+        coEvery { mockK8sClient.patchDeployment(namespace, name, any()) } returns deployment.copy(
+            containers = listOf(ContainerInfo("nginx", newImage))
+        )
+        
+        val pods = listOf(
+            PodInfo(
+                namespace = namespace,
+                name = "test-pod-1",
+                containers = listOf(ContainerInfo("nginx", newImage)),
+                status = PodStatus(
+                    phase = "Running",
+                    conditions = listOf(PodCondition("Ready", "True"))
+                )
+            )
+        )
+        coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to name)) } returns pods
+        
+        // When
+        deploymentUpdater.updateDeployment(namespace, name, newImage)
+        
+        // Then
+        coVerify { mockK8sClient.getDeployment(namespace, name) }
+        coVerify { mockK8sClient.patchDeployment(namespace, name, any()) }
+        coVerify { mockWebhookService.sendWebhook(match { 
+            it.eventType == WebhookEventType.IMAGE_ROLLOUT_STARTED 
+        }) }
+        coVerify { mockWebhookService.sendWebhook(match { 
+            it.eventType == WebhookEventType.IMAGE_ROLLOUT_COMPLETED 
+        }) }
+    }
+    
+    @Test
+    fun `test updateDeployment handles deployment not found`() = runBlocking {
+        // Given
+        val namespace = "test-namespace"
+        val name = "test-deployment"
+        val newImage = "nginx:1.21.0"
+        
+        coEvery { mockK8sClient.getDeployment(namespace, name) } returns null
+        
+        // When/Then
+        assertFailsWith<IllegalStateException> {
+            deploymentUpdater.updateDeployment(namespace, name, newImage)
+        }
+        
+        coVerify { mockWebhookService.sendWebhook(match { 
+            it.eventType == WebhookEventType.IMAGE_ROLLOUT_STARTED 
+        }) }
+        coVerify { mockWebhookService.sendWebhook(match { 
+            it.eventType == WebhookEventType.IMAGE_ROLLOUT_FAILED 
+        }) }
+    }
+    
+    @Test
+    fun `test updateDeployment with digest`() = runBlocking {
+        // Given
+        val namespace = "test-namespace"
+        val name = "test-deployment"
+        val newImage = "nginx:1.21.0"
+        val newDigest = "sha256:abc123"
+        val currentImage = "nginx:1.20.0"
+        
+        val updateResult = ImageUpdateResult(
+            hasUpdate = true,
+            currentImage = currentImage,
+            newImage = newImage,
+            newDigest = newDigest,
+            currentDigest = "sha256:old123",
+            reason = "New version available"
+        )
+        
+        val deployment = com.watchcluster.client.domain.DeploymentInfo(
+            namespace = namespace,
+            name = name,
+            generation = 1,
+            replicas = 1,
+            selector = mapOf("app" to name),
+            containers = listOf(ContainerInfo("nginx", currentImage)),
+            imagePullSecrets = emptyList(),
+            annotations = mapOf(),
+            status = DeploymentStatus(
+                observedGeneration = 1,
+                updatedReplicas = 1,
+                readyReplicas = 1,
+                availableReplicas = 1,
+                conditions = listOf(
+                    DeploymentCondition("Progressing", "True", reason = "NewReplicaSetAvailable"),
+                    DeploymentCondition("Available", "True")
+                )
+            )
+        )
+        
+        coEvery { mockK8sClient.getDeployment(namespace, name) } returns deployment
+        coEvery { mockK8sClient.patchDeployment(namespace, name, any()) } returns deployment.copy(
+            containers = listOf(ContainerInfo("nginx", "$newImage@$newDigest"))
+        )
+        
+        val pods = listOf(
+            PodInfo(
+                namespace = namespace,
+                name = "test-pod-1",
+                containers = listOf(ContainerInfo("nginx", "$newImage@$newDigest")),
+                status = PodStatus(
+                    phase = "Running",
+                    conditions = listOf(PodCondition("Ready", "True"))
+                )
+            )
+        )
+        coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to name)) } returns pods
+        
+        // When
+        deploymentUpdater.updateDeployment(namespace, name, newImage, updateResult)
+        
+        // Then
+        coVerify { 
+            mockK8sClient.patchDeployment(namespace, name, match { 
+                it.contains("$newImage@$newDigest") 
+            })
+        }
+    }
+    
+    @Test
+    fun `test updateDeployment with no containers`() = runBlocking {
+        // Given
+        val namespace = "test-namespace"
+        val name = "test-deployment"
+        val newImage = "nginx:1.21.0"
+        
+        val deployment = com.watchcluster.client.domain.DeploymentInfo(
+            namespace = namespace,
+            name = name,
+            generation = 1,
+            replicas = 1,
+            selector = mapOf("app" to name),
+            containers = emptyList(), // No containers
+            imagePullSecrets = emptyList(),
+            annotations = mapOf(),
+            status = DeploymentStatus()
+        )
+        
+        coEvery { mockK8sClient.getDeployment(namespace, name) } returns deployment
+        
+        // When/Then
+        assertFailsWith<IllegalStateException> {
+            deploymentUpdater.updateDeployment(namespace, name, newImage)
+        }
+        
+        coVerify { mockWebhookService.sendWebhook(match { 
+            it.eventType == WebhookEventType.IMAGE_ROLLOUT_FAILED 
+        }) }
     }
 }

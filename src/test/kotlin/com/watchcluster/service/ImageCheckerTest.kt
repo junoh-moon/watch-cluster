@@ -7,7 +7,8 @@ import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.model.DockerAuth
 import com.watchcluster.util.ImageParser
 import com.watchcluster.util.ImageComponents
-import io.fabric8.kubernetes.client.KubernetesClient
+import com.watchcluster.client.K8sClient
+import com.watchcluster.client.domain.*
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.BeforeEach
@@ -23,17 +24,33 @@ class ImageCheckerTest {
     
     private lateinit var mockDockerClient: DockerClient
     private lateinit var mockRegistryClient: DockerRegistryClient
-    private lateinit var mockKubernetesClient: KubernetesClient
+    private lateinit var mockK8sClient: K8sClient
     private lateinit var imageChecker: ImageChecker
+    
+    // Test implementation of K8sClient for specific test cases
+    private class TestK8sClient : K8sClient {
+        var secretResponse: SecretInfo? = null
+        var deploymentResponse: DeploymentInfo? = null
+        var podResponse: PodInfo? = null
+        var podListResponse: List<PodInfo> = emptyList()
+        
+        override fun getDeployment(namespace: String, name: String): DeploymentInfo? = deploymentResponse
+        override fun patchDeployment(namespace: String, name: String, patchJson: String): DeploymentInfo? = deploymentResponse
+        override fun watchDeployments(watcher: com.watchcluster.client.K8sWatcher<DeploymentInfo>): AutoCloseable = AutoCloseable {}
+        override fun getPod(namespace: String, name: String): PodInfo? = podResponse
+        override fun listPodsByLabels(namespace: String, labels: Map<String, String>): List<PodInfo> = podListResponse
+        override fun getSecret(namespace: String, name: String): SecretInfo? = secretResponse
+        override fun getConfiguration(): K8sClientConfig = K8sClientConfig("https://kubernetes.default.svc")
+    }
     
     @BeforeEach
     fun setup() {
         mockDockerClient = mockk()
         mockRegistryClient = mockk()
-        mockKubernetesClient = mockk()
+        mockK8sClient = mockk()
         
         // Create ImageChecker with mocked kubernetes client
-        imageChecker = ImageChecker(mockKubernetesClient)
+        imageChecker = ImageChecker(mockK8sClient)
         
         // Use reflection to inject mocked registry client
         ImageChecker::class.java.getDeclaredField("registryClient").apply {
@@ -142,13 +159,7 @@ class ImageCheckerTest {
         val currentImage = "myapp:latest"
         
         coEvery { mockRegistryClient.getImageDigest(null, "myapp", "latest", any()) } throws Exception("Registry API error")
-        coEvery { mockKubernetesClient.secrets() } returns mockk {
-            coEvery { inNamespace(any()) } returns mockk {
-                coEvery { withName(any()) } returns mockk {
-                    coEvery { get() } returns null
-                }
-            }
-        }
+        coEvery { mockK8sClient.getSecret(any(), any()) } returns null
         
         // When
         val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, "default", null)
@@ -204,53 +215,37 @@ class ImageCheckerTest {
         coEvery { mockRegistryClient.getImageDigest(null, "nginx", "latest", any()) } returns registryDigest
         
         // Mock Kubernetes deployment with current image in spec
-        coEvery { mockKubernetesClient.apps() } returns mockk {
-            coEvery { deployments() } returns mockk {
-                coEvery { inNamespace(namespace) } returns mockk {
-                    coEvery { withName(deploymentName) } returns mockk {
-                        coEvery { get() } returns mockk {
-                            every { metadata } returns mockk {
-                                every { annotations } returns null  // No previous digest in annotations
-                            }
-                            every { spec } returns mockk {
-                                every { template } returns mockk {
-                                    every { spec } returns mockk {
-                                        every { containers } returns listOf(mockk {
-                                            every { image } returns "nginx:latest@$runningDigest"  // Deployment spec has old digest
-                                        })
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        val deployment = DeploymentInfo(
+            namespace = namespace,
+            name = deploymentName,
+            generation = 1,
+            replicas = 1,
+            selector = mapOf("app" to deploymentName),
+            containers = listOf(ContainerInfo("nginx", "nginx:latest@$runningDigest")),
+            imagePullSecrets = emptyList(),
+            annotations = mapOf(),
+            status = DeploymentStatus()
+        )
+        coEvery { mockK8sClient.getDeployment(namespace, deploymentName) } returns deployment
         
         // Mock pod with running digest
-        coEvery { mockKubernetesClient.pods() } returns mockk {
-            coEvery { inNamespace(namespace) } returns mockk {
-                coEvery { withLabel("app", deploymentName) } returns mockk {
-                    coEvery { list() } returns mockk {
-                        every { items } returns listOf(mockk {
-                            every { status } returns mockk {
-                                every { containerStatuses } returns listOf(mockk {
-                                    every { imageID } returns "docker://nginx@$runningDigest"
-                                })
-                            }
-                        })
-                    }
-                }
-            }
-        }
+        val pod = PodInfo(
+            namespace = namespace,
+            name = "nginx-pod",
+            containers = listOf(ContainerInfo("nginx", "nginx:latest")),
+            status = PodStatus(
+                containerStatuses = listOf(
+                    ContainerStatus(
+                        name = "nginx",
+                        image = "nginx:latest",
+                        imageID = "docker://nginx@$runningDigest"
+                    )
+                )
+            )
+        )
+        coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to deploymentName)) } returns listOf(pod)
         
-        coEvery { mockKubernetesClient.secrets() } returns mockk {
-            coEvery { inNamespace(any()) } returns mockk {
-                coEvery { withName(any()) } returns mockk {
-                    coEvery { get() } returns null
-                }
-            }
-        }
+        coEvery { mockK8sClient.getSecret(any(), any()) } returns null
         
         // When
         val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
@@ -275,50 +270,37 @@ class ImageCheckerTest {
         coEvery { mockRegistryClient.getImageDigest(null, "myapp", "stable", any()) } returns registryDigest
         
         // Mock Kubernetes deployment with current image in spec
-        coEvery { mockKubernetesClient.apps() } returns mockk {
-            coEvery { deployments() } returns mockk {
-                coEvery { inNamespace(namespace) } returns mockk {
-                    coEvery { withName(deploymentName) } returns mockk {
-                        coEvery { get() } returns mockk {
-                            every { spec } returns mockk {
-                                every { template } returns mockk {
-                                    every { spec } returns mockk {
-                                        every { containers } returns listOf(mockk {
-                                            every { image } returns "myapp:stable@$runningDigest"
-                                        })
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        val deployment = DeploymentInfo(
+            namespace = namespace,
+            name = deploymentName,
+            generation = 1,
+            replicas = 1,
+            selector = mapOf("app" to deploymentName),
+            containers = listOf(ContainerInfo("myapp", "myapp:stable@$runningDigest")),
+            imagePullSecrets = emptyList(),
+            annotations = mapOf(),
+            status = DeploymentStatus()
+        )
+        coEvery { mockK8sClient.getDeployment(namespace, deploymentName) } returns deployment
         
         // Mock pod with running digest
-        coEvery { mockKubernetesClient.pods() } returns mockk {
-            coEvery { inNamespace(namespace) } returns mockk {
-                coEvery { withLabel("app", deploymentName) } returns mockk {
-                    coEvery { list() } returns mockk {
-                        every { items } returns listOf(mockk {
-                            every { status } returns mockk {
-                                every { containerStatuses } returns listOf(mockk {
-                                    every { imageID } returns "docker://myapp@$runningDigest"
-                                })
-                            }
-                        })
-                    }
-                }
-            }
-        }
+        val pod = PodInfo(
+            namespace = namespace,
+            name = "myapp-pod",
+            containers = listOf(ContainerInfo("myapp", "myapp:stable")),
+            status = PodStatus(
+                containerStatuses = listOf(
+                    ContainerStatus(
+                        name = "myapp",
+                        image = "myapp:stable",
+                        imageID = "docker://myapp@$runningDigest"
+                    )
+                )
+            )
+        )
+        coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to deploymentName)) } returns listOf(pod)
         
-        coEvery { mockKubernetesClient.secrets() } returns mockk {
-            coEvery { inNamespace(any()) } returns mockk {
-                coEvery { withName(any()) } returns mockk {
-                    coEvery { get() } returns null
-                }
-            }
-        }
+        coEvery { mockK8sClient.getSecret(any(), any()) } returns null
         
         // When - using Latest strategy for non-version tags
         val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
@@ -343,50 +325,37 @@ class ImageCheckerTest {
         coEvery { mockRegistryClient.getImageDigest(null, "openvinotoolkit/anomalib", "release-openvino", any()) } returns registryDigest
         
         // Mock Kubernetes deployment with current image in spec
-        coEvery { mockKubernetesClient.apps() } returns mockk {
-            coEvery { deployments() } returns mockk {
-                coEvery { inNamespace(namespace) } returns mockk {
-                    coEvery { withName(deploymentName) } returns mockk {
-                        coEvery { get() } returns mockk {
-                            every { spec } returns mockk {
-                                every { template } returns mockk {
-                                    every { spec } returns mockk {
-                                        every { containers } returns listOf(mockk {
-                                            every { image } returns "openvinotoolkit/anomalib:release-openvino@$runningDigest"
-                                        })
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        val deployment = DeploymentInfo(
+            namespace = namespace,
+            name = deploymentName,
+            generation = 1,
+            replicas = 1,
+            selector = mapOf("app" to deploymentName),
+            containers = listOf(ContainerInfo("anomalib", "openvinotoolkit/anomalib:release-openvino@$runningDigest")),
+            imagePullSecrets = emptyList(),
+            annotations = mapOf(),
+            status = DeploymentStatus()
+        )
+        coEvery { mockK8sClient.getDeployment(namespace, deploymentName) } returns deployment
         
         // Mock pod with running digest
-        coEvery { mockKubernetesClient.pods() } returns mockk {
-            coEvery { inNamespace(namespace) } returns mockk {
-                coEvery { withLabel("app", deploymentName) } returns mockk {
-                    coEvery { list() } returns mockk {
-                        every { items } returns listOf(mockk {
-                            every { status } returns mockk {
-                                every { containerStatuses } returns listOf(mockk {
-                                    every { imageID } returns "docker://openvinotoolkit/anomalib@$runningDigest"
-                                })
-                            }
-                        })
-                    }
-                }
-            }
-        }
+        val pod = PodInfo(
+            namespace = namespace,
+            name = "anomaly-pod",
+            containers = listOf(ContainerInfo("anomalib", "openvinotoolkit/anomalib:release-openvino")),
+            status = PodStatus(
+                containerStatuses = listOf(
+                    ContainerStatus(
+                        name = "anomalib",
+                        image = "openvinotoolkit/anomalib:release-openvino",
+                        imageID = "docker://openvinotoolkit/anomalib@$runningDigest"
+                    )
+                )
+            )
+        )
+        coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to deploymentName)) } returns listOf(pod)
         
-        coEvery { mockKubernetesClient.secrets() } returns mockk {
-            coEvery { inNamespace(any()) } returns mockk {
-                coEvery { withName(any()) } returns mockk {
-                    coEvery { get() } returns null
-                }
-            }
-        }
+        coEvery { mockK8sClient.getSecret(any(), any()) } returns null
         
         // When
         val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
@@ -410,50 +379,37 @@ class ImageCheckerTest {
         coEvery { mockRegistryClient.getImageDigest(null, "myapp", "release-candidate", any()) } returns sameDigest
         
         // Mock Kubernetes deployment with current image in spec
-        coEvery { mockKubernetesClient.apps() } returns mockk {
-            coEvery { deployments() } returns mockk {
-                coEvery { inNamespace(namespace) } returns mockk {
-                    coEvery { withName(deploymentName) } returns mockk {
-                        coEvery { get() } returns mockk {
-                            every { spec } returns mockk {
-                                every { template } returns mockk {
-                                    every { spec } returns mockk {
-                                        every { containers } returns listOf(mockk {
-                                            every { image } returns "myapp:release-candidate@$sameDigest"
-                                        })
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        val deployment = DeploymentInfo(
+            namespace = namespace,
+            name = deploymentName,
+            generation = 1,
+            replicas = 1,
+            selector = mapOf("app" to deploymentName),
+            containers = listOf(ContainerInfo("myapp", "myapp:release-candidate@$sameDigest")),
+            imagePullSecrets = emptyList(),
+            annotations = mapOf(),
+            status = DeploymentStatus()
+        )
+        coEvery { mockK8sClient.getDeployment(namespace, deploymentName) } returns deployment
         
         // Mock pod with same digest
-        coEvery { mockKubernetesClient.pods() } returns mockk {
-            coEvery { inNamespace(namespace) } returns mockk {
-                coEvery { withLabel("app", deploymentName) } returns mockk {
-                    coEvery { list() } returns mockk {
-                        every { items } returns listOf(mockk {
-                            every { status } returns mockk {
-                                every { containerStatuses } returns listOf(mockk {
-                                    every { imageID } returns "docker://myapp@$sameDigest"
-                                })
-                            }
-                        })
-                    }
-                }
-            }
-        }
+        val pod = PodInfo(
+            namespace = namespace,
+            name = "myapp-pod",
+            containers = listOf(ContainerInfo("myapp", "myapp:release-candidate")),
+            status = PodStatus(
+                containerStatuses = listOf(
+                    ContainerStatus(
+                        name = "myapp",
+                        image = "myapp:release-candidate",
+                        imageID = "docker://myapp@$sameDigest"
+                    )
+                )
+            )
+        )
+        coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to deploymentName)) } returns listOf(pod)
         
-        coEvery { mockKubernetesClient.secrets() } returns mockk {
-            coEvery { inNamespace(any()) } returns mockk {
-                coEvery { withName(any()) } returns mockk {
-                    coEvery { get() } returns null
-                }
-            }
-        }
+        coEvery { mockK8sClient.getSecret(any(), any()) } returns null
         
         // When
         val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
@@ -489,50 +445,37 @@ class ImageCheckerTest {
             coEvery { mockRegistryClient.getImageDigest(null, "myapp", tag, any()) } returns registryDigest
             
             // Mock Kubernetes deployment
-            coEvery { mockKubernetesClient.apps() } returns mockk {
-                coEvery { deployments() } returns mockk {
-                    coEvery { inNamespace(namespace) } returns mockk {
-                        coEvery { withName(deploymentName) } returns mockk {
-                            coEvery { get() } returns mockk {
-                                every { spec } returns mockk {
-                                    every { template } returns mockk {
-                                        every { spec } returns mockk {
-                                            every { containers } returns listOf(mockk {
-                                                every { image } returns "myapp:$tag@$runningDigest"
-                                            })
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            val deployment = DeploymentInfo(
+                namespace = namespace,
+                name = deploymentName,
+                generation = 1,
+                replicas = 1,
+                selector = mapOf("app" to deploymentName),
+                containers = listOf(ContainerInfo("myapp", "myapp:$tag@$runningDigest")),
+                imagePullSecrets = emptyList(),
+                annotations = mapOf(),
+                status = DeploymentStatus()
+            )
+            coEvery { mockK8sClient.getDeployment(namespace, deploymentName) } returns deployment
             
             // Mock pod
-            coEvery { mockKubernetesClient.pods() } returns mockk {
-                coEvery { inNamespace(namespace) } returns mockk {
-                    coEvery { withLabel("app", deploymentName) } returns mockk {
-                        coEvery { list() } returns mockk {
-                            every { items } returns listOf(mockk {
-                                every { status } returns mockk {
-                                    every { containerStatuses } returns listOf(mockk {
-                                        every { imageID } returns "docker://myapp@$runningDigest"
-                                    })
-                                }
-                            })
-                        }
-                    }
-                }
-            }
+            val pod = PodInfo(
+                namespace = namespace,
+                name = "myapp-pod",
+                containers = listOf(ContainerInfo("myapp", "myapp:$tag")),
+                status = PodStatus(
+                    containerStatuses = listOf(
+                        ContainerStatus(
+                            name = "myapp",
+                            image = "myapp:$tag",
+                            imageID = "docker://myapp@$runningDigest"
+                        )
+                    )
+                )
+            )
+            coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to deploymentName)) } returns listOf(pod)
             
-            coEvery { mockKubernetesClient.secrets() } returns mockk {
-                coEvery { inNamespace(any()) } returns mockk {
-                    coEvery { withName(any()) } returns mockk {
-                        coEvery { get() } returns null
-                    }
-                }
-            }
+            coEvery { mockK8sClient.getSecret(any(), any()) } returns null
             
             // When
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
@@ -802,22 +745,19 @@ class ImageCheckerTest {
         
         val encodedConfig = Base64.getEncoder().encodeToString(dockerConfigJson.toByteArray())
         
-        coEvery { mockKubernetesClient.secrets() } returns mockk {
-            coEvery { inNamespace(namespace) } returns mockk {
-                coEvery { withName(secretName) } returns mockk {
-                    coEvery { get() } returns mockk {
-                        every { type } returns "kubernetes.io/dockerconfigjson"
-                        every { data } returns mapOf(".dockerconfigjson" to encodedConfig)
-                    }
-                }
-            }
-        }
+        val secret = SecretInfo(
+            namespace = namespace,
+            name = secretName,
+            type = "kubernetes.io/dockerconfigjson",
+            data = mapOf(".dockerconfigjson" to dockerConfigJson) // Already decoded in domain object
+        )
+        coEvery { mockK8sClient.getSecret(namespace, secretName) } returns secret
         
         // When
         imageChecker.checkForUpdate("docker.io/myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
         
         // Then
-        verify { mockKubernetesClient.secrets() }
+        verify { mockK8sClient.getSecret(namespace, secretName) }
         // Auth should be extracted and used
     }
     
@@ -840,18 +780,13 @@ class ImageCheckerTest {
         }
         """.trimIndent()
         
-        val encodedConfig = Base64.getEncoder().encodeToString(dockerConfigJson.toByteArray())
-        
-        coEvery { mockKubernetesClient.secrets() } returns mockk {
-            coEvery { inNamespace(namespace) } returns mockk {
-                coEvery { withName(secretName) } returns mockk {
-                    coEvery { get() } returns mockk {
-                        every { type } returns "kubernetes.io/dockerconfigjson"
-                        every { data } returns mapOf(".dockerconfigjson" to encodedConfig)
-                    }
-                }
-            }
-        }
+        val secret = SecretInfo(
+            namespace = namespace,
+            name = secretName,
+            type = "kubernetes.io/dockerconfigjson",
+            data = mapOf(".dockerconfigjson" to dockerConfigJson)
+        )
+        coEvery { mockK8sClient.getSecret(namespace, secretName) } returns secret
         
         coEvery { mockRegistryClient.getTags(null, "myapp", any()) } returns listOf("v1.0.0")
         
@@ -859,7 +794,7 @@ class ImageCheckerTest {
         val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
         
         // Then
-        verify { mockKubernetesClient.secrets() }
+        verify { mockK8sClient.getSecret(namespace, secretName) }
         assertFalse(result.hasUpdate)
     }
     
@@ -869,13 +804,7 @@ class ImageCheckerTest {
         val namespace = "default"
         val secretName = "missing-secret"
         
-        coEvery { mockKubernetesClient.secrets() } returns mockk {
-            coEvery { inNamespace(namespace) } returns mockk {
-                coEvery { withName(secretName) } returns mockk {
-                    coEvery { get() } returns null
-                }
-            }
-        }
+        coEvery { mockK8sClient.getSecret(namespace, secretName) } returns null
         
         coEvery { mockRegistryClient.getTags(null, "myapp", null) } returns listOf("v1.0.0")
         
@@ -883,7 +812,7 @@ class ImageCheckerTest {
         val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
         
         // Then
-        verify { mockKubernetesClient.secrets() }
+        verify { mockK8sClient.getSecret(namespace, secretName) }
         assertFalse(result.hasUpdate) // Should continue without auth
     }
     
@@ -893,16 +822,13 @@ class ImageCheckerTest {
         val namespace = "default"
         val secretName = "malformed-secret"
         
-        coEvery { mockKubernetesClient.secrets() } returns mockk {
-            coEvery { inNamespace(namespace) } returns mockk {
-                coEvery { withName(secretName) } returns mockk {
-                    coEvery { get() } returns mockk {
-                        every { type } returns "kubernetes.io/dockerconfigjson"
-                        every { data } returns mapOf(".dockerconfigjson" to "invalid-base64")
-                    }
-                }
-            }
-        }
+        val secret = SecretInfo(
+            namespace = namespace,
+            name = secretName,
+            type = "kubernetes.io/dockerconfigjson",
+            data = mapOf(".dockerconfigjson" to "invalid-json")
+        )
+        coEvery { mockK8sClient.getSecret(namespace, secretName) } returns secret
         
         coEvery { mockRegistryClient.getTags(null, "myapp", null) } returns listOf("v1.0.0")
         
@@ -910,7 +836,7 @@ class ImageCheckerTest {
         val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
         
         // Then
-        verify { mockKubernetesClient.secrets() }
+        verify { mockK8sClient.getSecret(namespace, secretName) }
         assertFalse(result.hasUpdate) // Should continue without auth
     }
     
@@ -953,21 +879,21 @@ class ImageCheckerTest {
         
         coEvery { mockRegistryClient.getImageDigest(null, "myapp", "latest", null) } returns "sha256:abc123"
         
-        coEvery { mockKubernetesClient.pods() } returns mockk {
-            coEvery { inNamespace(namespace) } returns mockk {
-                coEvery { withLabel("app", deploymentName) } returns mockk {
-                    coEvery { list() } returns mockk {
-                        every { items } returns listOf(mockk {
-                            every { status } returns mockk {
-                                every { containerStatuses } returns listOf(mockk {
-                                    every { imageID } returns null // No imageID
-                                })
-                            }
-                        })
-                    }
-                }
-            }
-        }
+        val pod = PodInfo(
+            namespace = namespace,
+            name = "myapp-pod",
+            containers = listOf(ContainerInfo("myapp", "myapp:latest")),
+            status = PodStatus(
+                containerStatuses = listOf(
+                    ContainerStatus(
+                        name = "myapp",
+                        image = "myapp:latest",
+                        imageID = null // No imageID
+                    )
+                )
+            )
+        )
+        coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to deploymentName)) } returns listOf(pod)
         
         // When
         val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
@@ -985,15 +911,7 @@ class ImageCheckerTest {
         
         coEvery { mockRegistryClient.getImageDigest(null, "myapp", "latest", null) } returns "sha256:abc123"
         
-        coEvery { mockKubernetesClient.pods() } returns mockk {
-            coEvery { inNamespace(namespace) } returns mockk {
-                coEvery { withLabel("app", deploymentName) } returns mockk {
-                    coEvery { list() } returns mockk {
-                        every { items } returns emptyList()
-                    }
-                }
-            }
-        }
+        coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to deploymentName)) } returns emptyList()
         
         // When
         val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
@@ -1021,28 +939,20 @@ class ImageCheckerTest {
         }
         """.trimIndent()
         
-        val encodedConfig = Base64.getEncoder().encodeToString(dockerConfigJson.toByteArray())
-        
         // First two secrets fail, third succeeds
-        coEvery { mockKubernetesClient.secrets() } returns mockk {
-            coEvery { inNamespace(namespace) } returns mockk {
-                coEvery { withName("secret1") } returns mockk {
-                    coEvery { get() } returns null
-                }
-                coEvery { withName("secret2") } returns mockk {
-                    coEvery { get() } returns mockk {
-                        every { type } returns "Opaque" // Wrong type
-                        every { data } returns emptyMap()
-                    }
-                }
-                coEvery { withName("secret3") } returns mockk {
-                    coEvery { get() } returns mockk {
-                        every { type } returns "kubernetes.io/dockerconfigjson"
-                        every { data } returns mapOf(".dockerconfigjson" to encodedConfig)
-                    }
-                }
-            }
-        }
+        coEvery { mockK8sClient.getSecret(namespace, "secret1") } returns null
+        coEvery { mockK8sClient.getSecret(namespace, "secret2") } returns SecretInfo(
+            namespace = namespace,
+            name = "secret2",
+            type = "Opaque", // Wrong type
+            data = mapOf()
+        )
+        coEvery { mockK8sClient.getSecret(namespace, "secret3") } returns SecretInfo(
+            namespace = namespace,
+            name = "secret3",
+            type = "kubernetes.io/dockerconfigjson",
+            data = mapOf(".dockerconfigjson" to dockerConfigJson)
+        )
         
         coEvery { mockRegistryClient.getTags("docker.io", "myapp", any()) } returns listOf("v1.0.0")
         
@@ -1050,7 +960,7 @@ class ImageCheckerTest {
         val result = imageChecker.checkForUpdate("docker.io/myapp:v1.0.0", UpdateStrategy.Version(), namespace, secrets)
         
         // Then
-        verify(exactly = 3) { mockKubernetesClient.secrets() }
+        verify(exactly = 3) { mockK8sClient.getSecret(namespace, any()) }
         assertFalse(result.hasUpdate)
     }
     
@@ -1093,7 +1003,7 @@ class ImageCheckerTest {
         
         coEvery { mockRegistryClient.getImageDigest(null, "myapp", "latest", null) } returns "sha256:abc123"
         
-        coEvery { mockKubernetesClient.pods() } throws Exception("Kubernetes API error")
+        coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to deploymentName)) } throws Exception("Kubernetes API error")
         
         // When
         val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
@@ -1108,16 +1018,13 @@ class ImageCheckerTest {
         val namespace = "default"
         val secretName = "empty-secret"
         
-        coEvery { mockKubernetesClient.secrets() } returns mockk {
-            coEvery { inNamespace(namespace) } returns mockk {
-                coEvery { withName(secretName) } returns mockk {
-                    coEvery { get() } returns mockk {
-                        every { type } returns "kubernetes.io/dockerconfigjson"
-                        every { data } returns null // No data
-                    }
-                }
-            }
-        }
+        val secret = SecretInfo(
+            namespace = namespace,
+            name = secretName,
+            type = "kubernetes.io/dockerconfigjson",
+            data = mapOf() // Empty data
+        )
+        coEvery { mockK8sClient.getSecret(namespace, secretName) } returns secret
         
         coEvery { mockRegistryClient.getTags(null, "myapp", null) } returns listOf("v1.0.0")
         
@@ -1125,7 +1032,7 @@ class ImageCheckerTest {
         val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
         
         // Then
-        verify { mockKubernetesClient.secrets() }
+        verify { mockK8sClient.getSecret(namespace, secretName) }
         assertFalse(result.hasUpdate)
     }
     
@@ -1135,16 +1042,13 @@ class ImageCheckerTest {
         val namespace = "default"
         val secretName = "incomplete-secret"
         
-        coEvery { mockKubernetesClient.secrets() } returns mockk {
-            coEvery { inNamespace(namespace) } returns mockk {
-                coEvery { withName(secretName) } returns mockk {
-                    coEvery { get() } returns mockk {
-                        every { type } returns "kubernetes.io/dockerconfigjson"
-                        every { data } returns mapOf("other-key" to "value") // Wrong key
-                    }
-                }
-            }
-        }
+        val secret = SecretInfo(
+            namespace = namespace,
+            name = secretName,
+            type = "kubernetes.io/dockerconfigjson",
+            data = mapOf("other-key" to "value") // Wrong key
+        )
+        coEvery { mockK8sClient.getSecret(namespace, secretName) } returns secret
         
         coEvery { mockRegistryClient.getTags(null, "myapp", null) } returns listOf("v1.0.0")
         
@@ -1152,7 +1056,7 @@ class ImageCheckerTest {
         val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
         
         // Then
-        verify { mockKubernetesClient.secrets() }
+        verify { mockK8sClient.getSecret(namespace, secretName) }
         assertFalse(result.hasUpdate)
     }
     
@@ -1172,18 +1076,13 @@ class ImageCheckerTest {
         }
         """.trimIndent()
         
-        val encodedConfig = Base64.getEncoder().encodeToString(dockerConfigJson.toByteArray())
-        
-        coEvery { mockKubernetesClient.secrets() } returns mockk {
-            coEvery { inNamespace(namespace) } returns mockk {
-                coEvery { withName(secretName) } returns mockk {
-                    coEvery { get() } returns mockk {
-                        every { type } returns "kubernetes.io/dockerconfigjson"
-                        every { data } returns mapOf(".dockerconfigjson" to encodedConfig)
-                    }
-                }
-            }
-        }
+        val secret = SecretInfo(
+            namespace = namespace,
+            name = secretName,
+            type = "kubernetes.io/dockerconfigjson",
+            data = mapOf(".dockerconfigjson" to dockerConfigJson)
+        )
+        coEvery { mockK8sClient.getSecret(namespace, secretName) } returns secret
         
         coEvery { mockRegistryClient.getTags(null, "myapp", null) } returns listOf("v1.0.0")
         
@@ -1191,7 +1090,7 @@ class ImageCheckerTest {
         val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
         
         // Then
-        verify { mockKubernetesClient.secrets() }
+        verify { mockK8sClient.getSecret(namespace, secretName) }
         assertFalse(result.hasUpdate)
     }
     
@@ -1235,21 +1134,21 @@ class ImageCheckerTest {
         
         coEvery { mockRegistryClient.getImageDigest(null, "myapp", "stable", null) } returns null
         
-        coEvery { mockKubernetesClient.pods() } returns mockk {
-            coEvery { inNamespace(namespace) } returns mockk {
-                coEvery { withLabel("app", deploymentName) } returns mockk {
-                    coEvery { list() } returns mockk {
-                        every { items } returns listOf(mockk {
-                            every { status } returns mockk {
-                                every { containerStatuses } returns listOf(mockk {
-                                    every { imageID } returns "docker://myapp@sha256:abc123"
-                                })
-                            }
-                        })
-                    }
-                }
-            }
-        }
+        val pod = PodInfo(
+            namespace = namespace,
+            name = "myapp-pod",
+            containers = listOf(ContainerInfo("myapp", "myapp:stable")),
+            status = PodStatus(
+                containerStatuses = listOf(
+                    ContainerStatus(
+                        name = "myapp",
+                        image = "myapp:stable",
+                        imageID = "docker://myapp@sha256:abc123"
+                    )
+                )
+            )
+        )
+        coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to deploymentName)) } returns listOf(pod)
         
         // When
         val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
@@ -1268,21 +1167,21 @@ class ImageCheckerTest {
         
         coEvery { mockRegistryClient.getImageDigest(null, "myapp", "latest", null) } returns "sha256:abc123"
         
-        coEvery { mockKubernetesClient.pods() } returns mockk {
-            coEvery { inNamespace(namespace) } returns mockk {
-                coEvery { withLabel("app", deploymentName) } returns mockk {
-                    coEvery { list() } returns mockk {
-                        every { items } returns listOf(mockk {
-                            every { status } returns mockk {
-                                every { containerStatuses } returns listOf(mockk {
-                                    every { imageID } returns "docker://myapp:latest" // No @ digest
-                                })
-                            }
-                        })
-                    }
-                }
-            }
-        }
+        val pod = PodInfo(
+            namespace = namespace,
+            name = "myapp-pod",
+            containers = listOf(ContainerInfo("myapp", "myapp:latest")),
+            status = PodStatus(
+                containerStatuses = listOf(
+                    ContainerStatus(
+                        name = "myapp",
+                        image = "myapp:latest",
+                        imageID = "docker://myapp:latest" // No @ digest
+                    )
+                )
+            )
+        )
+        coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to deploymentName)) } returns listOf(pod)
         
         // When
         val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)

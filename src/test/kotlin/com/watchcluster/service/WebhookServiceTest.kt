@@ -1,6 +1,6 @@
 package com.watchcluster.service
 
-import com.watchcluster.model.DeploymentInfo
+import com.watchcluster.model.DeploymentEventData
 import com.watchcluster.model.WebhookConfig
 import com.watchcluster.model.WebhookEvent
 import com.watchcluster.model.WebhookEventType
@@ -63,7 +63,7 @@ class WebhookServiceTest {
         val event = WebhookEvent(
             eventType = WebhookEventType.DEPLOYMENT_DETECTED,
             timestamp = Instant.now().toString(),
-            deployment = DeploymentInfo(
+            deployment = DeploymentEventData(
                 namespace = "default",
                 name = "test-deployment",
                 image = "nginx:1.21"
@@ -86,7 +86,7 @@ class WebhookServiceTest {
         val event = WebhookEvent(
             eventType = WebhookEventType.DEPLOYMENT_DETECTED,
             timestamp = Instant.now().toString(),
-            deployment = DeploymentInfo(
+            deployment = DeploymentEventData(
                 namespace = "default",
                 name = "test-deployment",
                 image = "nginx:1.21"
@@ -110,7 +110,7 @@ class WebhookServiceTest {
         val event = WebhookEvent(
             eventType = WebhookEventType.DEPLOYMENT_DETECTED,
             timestamp = Instant.now().toString(),
-            deployment = DeploymentInfo(
+            deployment = DeploymentEventData(
                 namespace = "default",
                 name = "test-deployment",
                 image = "nginx:1.21"
@@ -154,7 +154,7 @@ class WebhookServiceTest {
         val event = WebhookEvent(
             eventType = WebhookEventType.IMAGE_ROLLOUT_FAILED,
             timestamp = Instant.now().toString(),
-            deployment = DeploymentInfo(
+            deployment = DeploymentEventData(
                 namespace = "default",
                 name = "test-deployment",
                 image = "nginx:1.21"
@@ -184,7 +184,7 @@ class WebhookServiceTest {
         val event = WebhookEvent(
             eventType = WebhookEventType.IMAGE_ROLLOUT_COMPLETED,
             timestamp = Instant.now().toString(),
-            deployment = DeploymentInfo(
+            deployment = DeploymentEventData(
                 namespace = "default",
                 name = "test-deployment",
                 image = "nginx:1.21"
@@ -222,7 +222,7 @@ class WebhookServiceTest {
         val event = WebhookEvent(
             eventType = WebhookEventType.IMAGE_ROLLOUT_STARTED,
             timestamp = Instant.now().toString(),
-            deployment = DeploymentInfo(
+            deployment = DeploymentEventData(
                 namespace = "production",
                 name = "test-deployment",
                 image = "nginx:1.21"
@@ -274,7 +274,7 @@ class WebhookServiceTest {
         val event = WebhookEvent(
             eventType = WebhookEventType.DEPLOYMENT_DETECTED,
             timestamp = Instant.now().toString(),
-            deployment = DeploymentInfo(
+            deployment = DeploymentEventData(
                 namespace = "default",
                 name = "test-deployment",
                 image = "nginx:1.21"
@@ -326,7 +326,7 @@ class WebhookServiceTest {
         val event = WebhookEvent(
             eventType = WebhookEventType.DEPLOYMENT_DETECTED,
             timestamp = Instant.now().toString(),
-            deployment = DeploymentInfo(
+            deployment = DeploymentEventData(
                 namespace = "default",
                 name = "test-deployment",
                 image = "nginx:1.21"

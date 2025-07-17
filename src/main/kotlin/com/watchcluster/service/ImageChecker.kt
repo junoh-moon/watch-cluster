@@ -5,7 +5,7 @@ import com.watchcluster.model.DockerAuth
 import com.watchcluster.model.ImageUpdateResult
 import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.util.ImageParser
-import io.fabric8.kubernetes.client.KubernetesClient
+import com.watchcluster.client.K8sClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -16,7 +16,7 @@ import java.util.concurrent.Executors
 private val logger = KotlinLogging.logger {}
 
 class ImageChecker(
-    private val kubernetesClient: KubernetesClient
+    private val k8sClient: K8sClient
 ) {
     private val registryClient = DockerRegistryClient()
     private val objectMapper = ObjectMapper()
@@ -57,15 +57,12 @@ class ImageChecker(
         for (secretName in secretNames) {
             runCatching {
                 val secret = withContext(k8sDispatcher) {
-                    kubernetesClient.secrets()
-                        .inNamespace(namespace)
-                        .withName(secretName)
-                        .get()
+                    k8sClient.getSecret(namespace, secretName)
                 }
                 
                 if (secret?.type == "kubernetes.io/dockerconfigjson") {
-                    val dockerConfigJson = secret.data?.get(".dockerconfigjson") ?: return@runCatching
-                    val decodedConfig = Base64.getDecoder().decode(dockerConfigJson).toString(Charsets.UTF_8)
+                    val dockerConfigJson = secret.data[".dockerconfigjson"] ?: return@runCatching
+                    val decodedConfig = dockerConfigJson
                     val configRoot = objectMapper.readTree(decodedConfig)
                     val authsNode = configRoot.get("auths") ?: return@runCatching
                     
@@ -317,15 +314,11 @@ class ImageChecker(
             if (namespace != null && deploymentName != null) {
                 // Get the deployment spec image - this is what we should compare against registry
                 val deployment = withContext(k8sDispatcher) {
-                    kubernetesClient.apps()
-                        .deployments()
-                        .inNamespace(namespace)
-                        .withName(deploymentName)
-                        .get()
+                    k8sClient.getDeployment(namespace, deploymentName)
                 }
                 
                 if (deployment != null) {
-                    val containerImage = deployment.spec?.template?.spec?.containers?.firstOrNull()?.image
+                    val containerImage = deployment.containers.firstOrNull()?.image
                     if (containerImage != null && containerImage.contains("@")) {
                         // Extract digest from deployment spec image (format: image:tag@sha256:...)
                         val digest = containerImage.substringAfter("@")

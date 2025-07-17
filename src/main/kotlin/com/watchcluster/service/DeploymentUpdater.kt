@@ -2,9 +2,7 @@ package com.watchcluster.service
 
 import com.watchcluster.model.*
 import com.watchcluster.util.ImageParser
-import io.fabric8.kubernetes.api.model.apps.Deployment
-import io.fabric8.kubernetes.client.KubernetesClient
-import io.fabric8.kubernetes.client.dsl.RollableScalableResource
+import com.watchcluster.client.K8sClient
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -16,7 +14,7 @@ import java.util.concurrent.Executors
 private val logger = KotlinLogging.logger {}
 
 class DeploymentUpdater(
-    private val kubernetesClient: KubernetesClient,
+    private val k8sClient: K8sClient,
     private val webhookService: WebhookService
 ) {
     private val k8sThreadPool = Executors.newFixedThreadPool(
@@ -32,20 +30,15 @@ class DeploymentUpdater(
             webhookService.sendWebhook(WebhookEvent(
                 eventType = WebhookEventType.IMAGE_ROLLOUT_STARTED,
                 timestamp = java.time.Instant.now().toString(),
-                deployment = DeploymentInfo(namespace, name, newImage),
+                deployment = DeploymentEventData(namespace, name, newImage),
                 details = mapOf("previousImage" to previousImage)
             ))
             
-            val deploymentResource = kubernetesClient.apps()
-                .deployments()
-                .inNamespace(namespace)
-                .withName(name)
-            
             val deployment = withContext(k8sDispatcher) {
-                deploymentResource.get()
+                k8sClient.getDeployment(namespace, name)
             } ?: throw IllegalStateException("Deployment $namespace/$name not found")
             
-            val containers = deployment.spec.template.spec.containers
+            val containers = deployment.containers
             if (containers.isEmpty()) {
                 throw IllegalStateException("No containers found in deployment $namespace/$name")
             }
@@ -71,21 +64,21 @@ class DeploymentUpdater(
             val patchJson = buildCombinedPatch(containerName to imageToSet, annotationMap )
             
             withContext(k8sDispatcher) {
-                deploymentResource.patch(patchJson)
+                k8sClient.patchDeployment(namespace, name, patchJson)
             }?.let { logger.info { "Patch successful - deployment $namespace/$name updated with new image: $imageToSet" } }
 			?: run {
                 logger.error { "Patch returned null response for deployment $namespace/$name" }
                 throw IllegalStateException("Patch operation returned null deployment")
 			}
             
-            waitForRollout(deploymentResource, namespace, name, imageToSet)
+            waitForRollout(namespace, name, imageToSet)
         }.onFailure { e ->
             logger.error(e) { "Failed to update deployment $namespace/$name" }
             
             webhookService.sendWebhook(WebhookEvent(
                 eventType = WebhookEventType.IMAGE_ROLLOUT_FAILED,
                 timestamp = java.time.Instant.now().toString(),
-                deployment = DeploymentInfo(namespace, name, newImage),
+                deployment = DeploymentEventData(namespace, name, newImage),
                 details = mapOf("error" to (e.message ?: "Unknown error"))
             ))
             
@@ -126,20 +119,15 @@ class DeploymentUpdater(
     private suspend fun getCurrentImage(namespace: String, name: String): String {
         return runCatching {
             val deployment = withContext(k8sDispatcher) {
-                kubernetesClient.apps()
-                    .deployments()
-                    .inNamespace(namespace)
-                    .withName(name)
-                    .get()
+                k8sClient.getDeployment(namespace, name)
             }
-            deployment?.spec?.template?.spec?.containers?.get(0)?.image ?: "unknown"
+            deployment?.containers?.firstOrNull()?.image ?: "unknown"
         }.getOrElse {
             "unknown"
         }
     }
     
     private suspend fun waitForRollout(
-        deploymentResource: RollableScalableResource<Deployment>,
         namespace: String,
         name: String,
         newImage: String
@@ -151,69 +139,67 @@ class DeploymentUpdater(
             
             while (System.currentTimeMillis() - startTime < timeout) {
                 val deployment = withContext(k8sDispatcher) {
-                    deploymentResource.get()
-                }
+                    k8sClient.getDeployment(namespace, name)
+                } ?: return
                 val status = deployment.status
                 
-                if (status != null) {
-                    // Check if controller has observed the latest generation
-                    val generationMatch = status.observedGeneration == deployment.metadata.generation
-                    if (!generationMatch) {
-                        logger.debug { "Waiting for controller to observe generation ${deployment.metadata.generation} (current: ${status.observedGeneration})" }
-                        kotlinx.coroutines.delay(2000)
-                        continue
-                    }
+                // Check if controller has observed the latest generation
+                val generationMatch = status.observedGeneration == deployment.generation
+                if (!generationMatch) {
+                    logger.debug { "Waiting for controller to observe generation ${deployment.generation} (current: ${status.observedGeneration})" }
+                    kotlinx.coroutines.delay(2000)
+                    continue
+                }
+                
+                // Check deployment conditions
+                val conditions = status.conditions
+                val progressingCondition = conditions.find { it.type == "Progressing" }
+                val availableCondition = conditions.find { it.type == "Available" }
+                
+                val isProgressing = progressingCondition?.status == "True"
+                val isAvailable = availableCondition?.status == "True"
+                val isComplete = progressingCondition?.reason == "NewReplicaSetAvailable"
+                
+                // Check replica counts
+                val replicas = deployment.replicas
+                val updatedReplicas = status.updatedReplicas ?: 0
+                val readyReplicas = status.readyReplicas ?: 0
+                val availableReplicas = status.availableReplicas ?: 0
+                
+                // Check if all replicas are updated and ready
+                val replicasReady = updatedReplicas == replicas && 
+                                   readyReplicas == replicas && 
+                                   availableReplicas == replicas
+                
+                if (replicasReady && isAvailable && isComplete) {
+                    // Verify actual pod images
+                    val allPodsUpdated = verifyPodImages(deployment, namespace, newImage)
                     
-                    // Check deployment conditions
-                    val conditions = status.conditions ?: emptyList()
-                    val progressingCondition = conditions.find { it.type == "Progressing" }
-                    val availableCondition = conditions.find { it.type == "Available" }
-                    
-                    val isProgressing = progressingCondition?.status == "True"
-                    val isAvailable = availableCondition?.status == "True"
-                    val isComplete = progressingCondition?.reason == "NewReplicaSetAvailable"
-                    
-                    // Check replica counts
-                    val replicas = deployment.spec.replicas ?: 1
-                    val updatedReplicas = status.updatedReplicas ?: 0
-                    val readyReplicas = status.readyReplicas ?: 0
-                    val availableReplicas = status.availableReplicas ?: 0
-                    
-                    // Check if all replicas are updated and ready
-                    val replicasReady = updatedReplicas == replicas && 
-                                       readyReplicas == replicas && 
-                                       availableReplicas == replicas
-                    
-                    if (replicasReady && isAvailable && isComplete) {
-                        // Verify actual pod images
-                        val allPodsUpdated = verifyPodImages(deployment, namespace, newImage)
+                    if (allPodsUpdated) {
+                        logger.info { "Rollout completed successfully - all pods running image: $newImage" }
                         
-                        if (allPodsUpdated) {
-                            logger.info { "Rollout completed successfully - all pods running image: $newImage" }
-                            
-                            webhookService.sendWebhook(WebhookEvent(
-                                eventType = WebhookEventType.IMAGE_ROLLOUT_COMPLETED,
-                                timestamp = java.time.Instant.now().toString(),
-                                deployment = DeploymentInfo(namespace, name, newImage),
-                                details = mapOf("rolloutDuration" to "${System.currentTimeMillis() - startTime}ms")
-                            ))
-                            
-                            return
-                        } else {
-                            logger.debug { "Waiting for all pods to update to new image" }
-                        }
+                        webhookService.sendWebhook(WebhookEvent(
+                            eventType = WebhookEventType.IMAGE_ROLLOUT_COMPLETED,
+                            timestamp = java.time.Instant.now().toString(),
+                            deployment = DeploymentEventData(namespace, name, newImage),
+                            details = mapOf("rolloutDuration" to "${System.currentTimeMillis() - startTime}ms")
+                        ))
+                        
+                        return
+                    } else {
+                        logger.debug { "Waiting for all pods to update to new image" }
                     }
-                    
-                    logger.debug { 
-                        listOf(
-                            "Rollout progress - Generation: ${status.observedGeneration}/${deployment.metadata.generation}",
-                            "Updated: $updatedReplicas/$replicas",
-                            "Ready: $readyReplicas/$replicas", 
-                            "Available: $availableReplicas/$replicas",
-                            "Progressing: $isProgressing (${progressingCondition?.reason})",
-                            "Available: ${availableCondition?.status}"
-                        ).joinToString(", ")
-                    }
+                }
+                
+                logger.debug { 
+                    listOf(
+                        "Rollout progress - Generation: ${status.observedGeneration}/${deployment.generation}",
+                        "Updated: $updatedReplicas/$replicas",
+                        "Ready: $readyReplicas/$replicas", 
+                        "Available: $availableReplicas/$replicas",
+                        "Progressing: $isProgressing (${progressingCondition?.reason})",
+                        "Available: ${availableCondition?.status}"
+                    ).joinToString(", ")
                 }
                 
                 kotlinx.coroutines.delay(5000)
@@ -225,30 +211,26 @@ class DeploymentUpdater(
         }
     }
     
-    private suspend fun verifyPodImages(deployment: Deployment, namespace: String, expectedImage: String): Boolean {
+    private suspend fun verifyPodImages(deployment: com.watchcluster.client.domain.DeploymentInfo, namespace: String, expectedImage: String): Boolean {
         return runCatching {
             val pods = withContext(k8sDispatcher) {
-                kubernetesClient.pods()
-                    .inNamespace(namespace)
-                    .withLabels(deployment.spec.selector.matchLabels)
-                    .list()
-                    .items
+                k8sClient.listPodsByLabels(namespace, deployment.selector)
             }
             
             if (pods.isEmpty()) {
-                logger.warn { "No pods found for deployment $namespace/${deployment.metadata.name}" }
+                logger.warn { "No pods found for deployment $namespace/${deployment.name}" }
                 return false
             }
             
             val allPodsUpdated = pods.all { pod ->
-                val podReady = pod.status?.conditions?.find { it.type == "Ready" }?.status == "True"
-                val containerImages = pod.spec?.containers?.map { it.image } ?: emptyList()
+                val podReady = pod.status.conditions.find { it.type == "Ready" }?.status == "True"
+                val containerImages = pod.containers.map { it.image }
                 val hasCorrectImage = containerImages.any { image ->
                     image == expectedImage
                 }
                 
                 if (!hasCorrectImage) {
-                    logger.debug { "Pod ${pod.metadata.name} has images: $containerImages, expected: $expectedImage" }
+                    logger.debug { "Pod ${pod.name} has images: $containerImages, expected: $expectedImage" }
                 }
                 
                 podReady && hasCorrectImage

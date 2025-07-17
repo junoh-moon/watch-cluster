@@ -3,6 +3,7 @@ package com.watchcluster
 import com.watchcluster.controller.WatchController
 import com.watchcluster.model.WebhookConfig
 import io.fabric8.kubernetes.client.KubernetesClientBuilder
+import com.watchcluster.client.impl.Fabric8K8sClient
 import kotlinx.coroutines.*
 import mu.KotlinLogging
 
@@ -34,24 +35,23 @@ fun main() {
             "Webhook Headers: ${webhookConfig.headers.entries.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "None"}"
         }
 
-        val kubernetesClient = KubernetesClientBuilder().build()
+        val fabric8Client = KubernetesClientBuilder().build()
+        val k8sClient = Fabric8K8sClient(fabric8Client)
         logger.info {
-            "Connected to Kubernetes cluster: ${kubernetesClient.configuration.masterUrl}"
+            "Connected to Kubernetes cluster: ${k8sClient.getConfiguration().masterUrl}"
         }
 
         // Get current pod information
         if (podName != "unknown" && podNamespace != "unknown") {
             runCatching {
-                kubernetesClient.pods()
-                    .inNamespace(podNamespace)
-                    .withName(podName)
-                    .get()
+                k8sClient.getPod(podNamespace, podName)
                 ?.status
                 ?.containerStatuses
                 ?.forEach { containerStatus ->
                     logger.info { "Container: ${containerStatus.name}" }
                     logger.info { "  Image: ${containerStatus.image}" }
                     logger.info { "  Image ID: ${containerStatus.imageID}" }
+                    logger.info { "  Ready: ${containerStatus.ready}" }
                 }
             }.onFailure { e ->
                 logger.warn { "Failed to get pod information: ${e.message}" }
@@ -60,7 +60,7 @@ fun main() {
 
         logger.info { "==================================" }
 
-        val controller = WatchController(kubernetesClient)
+        val controller = WatchController(k8sClient)
         controller.start()
 
         // main thread가 종료되지 않도록 block

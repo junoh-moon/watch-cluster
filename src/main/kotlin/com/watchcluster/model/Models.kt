@@ -92,11 +92,11 @@ data class WebhookConfig(
 data class WebhookEvent(
     val eventType: WebhookEventType,
     val timestamp: String,
-    val deployment: DeploymentInfo,
+    val deployment: DeploymentEventData,
     val details: Map<String, Any> = emptyMap()
 )
 
-data class DeploymentInfo(
+data class DeploymentEventData(
     val namespace: String,
     val name: String,
     val image: String

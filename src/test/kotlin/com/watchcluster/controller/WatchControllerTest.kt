@@ -1,31 +1,24 @@
 package com.watchcluster.controller
 
 import com.watchcluster.model.*
-import io.fabric8.kubernetes.api.model.*
-import io.fabric8.kubernetes.api.model.apps.Deployment
-import io.fabric8.kubernetes.api.model.apps.DeploymentSpec
-import io.fabric8.kubernetes.api.model.apps.DeploymentList
-import io.fabric8.kubernetes.client.KubernetesClient
-import io.fabric8.kubernetes.client.dsl.*
-import io.fabric8.kubernetes.client.informers.ResourceEventHandler
-import io.fabric8.kubernetes.client.informers.SharedIndexInformer
+import com.watchcluster.client.K8sClient
+import com.watchcluster.client.K8sWatcher
+import com.watchcluster.client.domain.*
 import io.mockk.*
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.*
-import io.fabric8.kubernetes.client.Watcher
-import io.fabric8.kubernetes.client.WatcherException
 
 class WatchControllerTest {
     
-    private lateinit var mockKubernetesClient: KubernetesClient
+    private lateinit var mockK8sClient: K8sClient
     private lateinit var watchController: WatchController
     
     @BeforeEach
     fun setup() {
-        mockKubernetesClient = mockk(relaxed = true)
+        mockK8sClient = mockk(relaxed = true)
         
         // Mock static method for WebhookConfig
         mockkObject(WebhookConfig.Companion)
@@ -34,7 +27,7 @@ class WatchControllerTest {
             timeout = 5000
         )
         
-        watchController = WatchController(mockKubernetesClient)
+        watchController = WatchController(mockK8sClient)
     }
     
     @Test
@@ -43,20 +36,14 @@ class WatchControllerTest {
     }
     
     @Test
-    fun `start() should call kubernetes client apps deployments inAnyNamespace watch`() {
-        val mockNamespaceOp = mockk<io.fabric8.kubernetes.client.dsl.AnyNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>>(relaxed = true)
-        val mockDeploymentOp = mockk<io.fabric8.kubernetes.client.dsl.MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>>(relaxed = true)
-        val watcherSlot = slot<Watcher<Deployment>>()
-
-        every { mockKubernetesClient.apps().deployments() } returns mockDeploymentOp
-        every { mockDeploymentOp.inAnyNamespace() } returns mockNamespaceOp
-        every { mockNamespaceOp.watch(capture(watcherSlot)) } returns mockk(relaxed = true)
-
+    fun `start() should call kubernetes client watchDeployments`() {
+        val watcherSlot = slot<K8sWatcher<DeploymentInfo>>()
+        
+        every { mockK8sClient.watchDeployments(capture(watcherSlot)) } returns mockk(relaxed = true)
+        
         watchController.start()
-
-        verify { mockKubernetesClient.apps().deployments() }
-        verify { mockDeploymentOp.inAnyNamespace() }
-        verify { mockNamespaceOp.watch(any()) }
+        
+        verify { mockK8sClient.watchDeployments(any()) }
         assertTrue(watcherSlot.isCaptured)
     }
     
@@ -72,15 +59,15 @@ class WatchControllerTest {
                 WatchClusterAnnotations.STRATEGY to "version-lock-major"
             )
         )
-        val mockNamespaceOp = mockk<io.fabric8.kubernetes.client.dsl.AnyNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>>(relaxed = true)
-        val mockDeploymentOp = mockk<io.fabric8.kubernetes.client.dsl.MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>>(relaxed = true)
-        val watcherSlot = slot<Watcher<Deployment>>()
-        every { mockKubernetesClient.apps().deployments() } returns mockDeploymentOp
-        every { mockDeploymentOp.inAnyNamespace() } returns mockNamespaceOp
-        every { mockNamespaceOp.watch(capture(watcherSlot)) } returns mockk(relaxed = true)
+        
+        val watcherSlot = slot<K8sWatcher<DeploymentInfo>>()
+        every { mockK8sClient.watchDeployments(capture(watcherSlot)) } returns mockk(relaxed = true)
+        
         watchController.start()
+        
         val watcher = watcherSlot.captured
-        watcher.eventReceived(Watcher.Action.ADDED, deployment)
+        watcher.eventReceived(K8sWatchEvent(EventType.ADDED, deployment))
+        
         assertNotNull(watcher)
     }
     
@@ -94,15 +81,15 @@ class WatchControllerTest {
                 WatchClusterAnnotations.ENABLED to "false"
             )
         )
-        val mockNamespaceOp = mockk<io.fabric8.kubernetes.client.dsl.AnyNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>>(relaxed = true)
-        val mockDeploymentOp = mockk<io.fabric8.kubernetes.client.dsl.MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>>(relaxed = true)
-        val watcherSlot = slot<Watcher<Deployment>>()
-        every { mockKubernetesClient.apps().deployments() } returns mockDeploymentOp
-        every { mockDeploymentOp.inAnyNamespace() } returns mockNamespaceOp
-        every { mockNamespaceOp.watch(capture(watcherSlot)) } returns mockk(relaxed = true)
+        
+        val watcherSlot = slot<K8sWatcher<DeploymentInfo>>()
+        every { mockK8sClient.watchDeployments(capture(watcherSlot)) } returns mockk(relaxed = true)
+        
         watchController.start()
+        
         val watcher = watcherSlot.captured
-        watcher.eventReceived(Watcher.Action.ADDED, deployment)
+        watcher.eventReceived(K8sWatchEvent(EventType.ADDED, deployment))
+        
         assertNotNull(watcher)
     }
     
@@ -112,17 +99,17 @@ class WatchControllerTest {
             namespace = "test-ns",
             name = "test-app",
             image = "nginx:1.20.0",
-            annotations = null
+            annotations = mapOf()
         )
-        val mockNamespaceOp = mockk<io.fabric8.kubernetes.client.dsl.AnyNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>>(relaxed = true)
-        val mockDeploymentOp = mockk<io.fabric8.kubernetes.client.dsl.MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>>(relaxed = true)
-        val watcherSlot = slot<Watcher<Deployment>>()
-        every { mockKubernetesClient.apps().deployments() } returns mockDeploymentOp
-        every { mockDeploymentOp.inAnyNamespace() } returns mockNamespaceOp
-        every { mockNamespaceOp.watch(capture(watcherSlot)) } returns mockk(relaxed = true)
+        
+        val watcherSlot = slot<K8sWatcher<DeploymentInfo>>()
+        every { mockK8sClient.watchDeployments(capture(watcherSlot)) } returns mockk(relaxed = true)
+        
         watchController.start()
+        
         val watcher = watcherSlot.captured
-        watcher.eventReceived(Watcher.Action.ADDED, deployment)
+        watcher.eventReceived(K8sWatchEvent(EventType.ADDED, deployment))
+        
         assertNotNull(watcher)
     }
     
@@ -134,30 +121,29 @@ class WatchControllerTest {
             image = "nginx:1.20.0",
             annotations = mapOf(WatchClusterAnnotations.ENABLED to "true")
         )
-        val mockNamespaceOp = mockk<io.fabric8.kubernetes.client.dsl.AnyNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>>(relaxed = true)
-        val mockDeploymentOp = mockk<io.fabric8.kubernetes.client.dsl.MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>>(relaxed = true)
-        val watcherSlot = slot<Watcher<Deployment>>()
-        every { mockKubernetesClient.apps().deployments() } returns mockDeploymentOp
-        every { mockDeploymentOp.inAnyNamespace() } returns mockNamespaceOp
-        every { mockNamespaceOp.watch(capture(watcherSlot)) } returns mockk(relaxed = true)
+        
+        val watcherSlot = slot<K8sWatcher<DeploymentInfo>>()
+        every { mockK8sClient.watchDeployments(capture(watcherSlot)) } returns mockk(relaxed = true)
+        
         watchController.start()
+        
         val watcher = watcherSlot.captured
-        watcher.eventReceived(Watcher.Action.DELETED, deployment)
+        watcher.eventReceived(K8sWatchEvent(EventType.DELETED, deployment))
+        
         assertNotNull(watcher)
     }
     
     @Test
     fun `onClose should not throw`() {
-        val mockNamespaceOp = mockk<io.fabric8.kubernetes.client.dsl.AnyNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>>(relaxed = true)
-        val mockDeploymentOp = mockk<io.fabric8.kubernetes.client.dsl.MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>>(relaxed = true)
-        val watcherSlot = slot<Watcher<Deployment>>()
-        every { mockKubernetesClient.apps().deployments() } returns mockDeploymentOp
-        every { mockDeploymentOp.inAnyNamespace() } returns mockNamespaceOp
-        every { mockNamespaceOp.watch(capture(watcherSlot)) } returns mockk(relaxed = true)
+        val watcherSlot = slot<K8sWatcher<DeploymentInfo>>()
+        every { mockK8sClient.watchDeployments(capture(watcherSlot)) } returns mockk(relaxed = true)
+        
         watchController.start()
+        
         val watcher = watcherSlot.captured
         watcher.onClose(null)
-        watcher.onClose(WatcherException("test close"))
+        watcher.onClose(Exception("test close"))
+        
         assertNotNull(watcher)
     }
     
@@ -246,37 +232,62 @@ class WatchControllerTest {
         assertFalse(defaultStrategy.lockMajorVersion)
     }
     
+    @Test
+    fun `test deployment with multiple containers`() {
+        val deployment = createMockDeployment(
+            namespace = "test-ns",
+            name = "test-app",
+            image = "nginx:1.20.0",
+            annotations = mapOf(WatchClusterAnnotations.ENABLED to "true"),
+            containers = listOf(
+                ContainerInfo("nginx", "nginx:1.20.0"),
+                ContainerInfo("sidecar", "sidecar:1.0.0")
+            )
+        )
+        
+        assertEquals(2, deployment.containers.size)
+        assertEquals("nginx", deployment.containers[0].name)
+        assertEquals("nginx:1.20.0", deployment.containers[0].image)
+    }
+    
+    @Test
+    fun `test watcher handles error event`() {
+        val watcherSlot = slot<K8sWatcher<DeploymentInfo>>()
+        every { mockK8sClient.watchDeployments(capture(watcherSlot)) } returns mockk(relaxed = true)
+        
+        watchController.start()
+        
+        val watcher = watcherSlot.captured
+        val deployment = createMockDeployment(
+            namespace = "test-ns",
+            name = "test-app",
+            image = "nginx:1.20.0",
+            annotations = mapOf()
+        )
+        
+        // Should not throw
+        watcher.eventReceived(K8sWatchEvent(EventType.ERROR, deployment))
+        
+        assertNotNull(watcher)
+    }
+    
     private fun createMockDeployment(
         namespace: String,
         name: String, 
         image: String,
-        annotations: Map<String, String>?
-    ): Deployment {
-        val metadata = ObjectMeta().apply {
-            this.namespace = namespace
-            this.name = name
-            this.annotations = annotations
-        }
-        
-        val container = Container().apply {
-            this.image = image
-        }
-        
-        val podSpec = PodSpec().apply {
-            containers = listOf(container)
-        }
-        
-        val podTemplate = PodTemplateSpec().apply {
-            spec = podSpec
-        }
-        
-        val deploymentSpec = DeploymentSpec().apply {
-            template = podTemplate
-        }
-        
-        return Deployment().apply {
-            this.metadata = metadata
-            spec = deploymentSpec
-        }
+        annotations: Map<String, String>,
+        containers: List<ContainerInfo> = listOf(ContainerInfo("container", image))
+    ): DeploymentInfo {
+        return DeploymentInfo(
+            namespace = namespace,
+            name = name,
+            generation = 1,
+            replicas = 1,
+            selector = mapOf("app" to name),
+            containers = containers,
+            imagePullSecrets = emptyList(),
+            annotations = annotations,
+            status = DeploymentStatus()
+        )
     }
 }
