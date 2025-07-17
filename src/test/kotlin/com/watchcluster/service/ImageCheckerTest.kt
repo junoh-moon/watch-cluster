@@ -34,13 +34,13 @@ class ImageCheckerTest {
         var podResponse: PodInfo? = null
         var podListResponse: List<PodInfo> = emptyList()
         
-        override fun getDeployment(namespace: String, name: String): DeploymentInfo? = deploymentResponse
-        override fun patchDeployment(namespace: String, name: String, patchJson: String): DeploymentInfo? = deploymentResponse
+        override suspend fun getDeployment(namespace: String, name: String): DeploymentInfo? = deploymentResponse
+        override suspend fun patchDeployment(namespace: String, name: String, patchJson: String): DeploymentInfo? = deploymentResponse
         override fun watchDeployments(watcher: com.watchcluster.client.K8sWatcher<DeploymentInfo>): AutoCloseable = AutoCloseable {}
-        override fun getPod(namespace: String, name: String): PodInfo? = podResponse
-        override fun listPodsByLabels(namespace: String, labels: Map<String, String>): List<PodInfo> = podListResponse
-        override fun getSecret(namespace: String, name: String): SecretInfo? = secretResponse
-        override fun getConfiguration(): K8sClientConfig = K8sClientConfig("https://kubernetes.default.svc")
+        override suspend fun getPod(namespace: String, name: String): PodInfo? = podResponse
+        override suspend fun listPodsByLabels(namespace: String, labels: Map<String, String>): List<PodInfo> = podListResponse
+        override suspend fun getSecret(namespace: String, name: String): SecretInfo? = secretResponse
+        override suspend fun getConfiguration(): K8sClientConfig = K8sClientConfig("https://kubernetes.default.svc")
     }
     
     @BeforeEach
@@ -743,8 +743,6 @@ class ImageCheckerTest {
         }
         """.trimIndent()
         
-        val encodedConfig = Base64.getEncoder().encodeToString(dockerConfigJson.toByteArray())
-        
         val secret = SecretInfo(
             namespace = namespace,
             name = secretName,
@@ -757,7 +755,7 @@ class ImageCheckerTest {
         imageChecker.checkForUpdate("docker.io/myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
         
         // Then
-        verify { mockK8sClient.getSecret(namespace, secretName) }
+        coVerify { mockK8sClient.getSecret(namespace, secretName) }
         // Auth should be extracted and used
     }
     
@@ -794,7 +792,7 @@ class ImageCheckerTest {
         val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
         
         // Then
-        verify { mockK8sClient.getSecret(namespace, secretName) }
+        coVerify { mockK8sClient.getSecret(namespace, secretName) }
         assertFalse(result.hasUpdate)
     }
     
@@ -812,7 +810,7 @@ class ImageCheckerTest {
         val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
         
         // Then
-        verify { mockK8sClient.getSecret(namespace, secretName) }
+        coVerify { mockK8sClient.getSecret(namespace, secretName) }
         assertFalse(result.hasUpdate) // Should continue without auth
     }
     
@@ -836,7 +834,7 @@ class ImageCheckerTest {
         val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
         
         // Then
-        verify { mockK8sClient.getSecret(namespace, secretName) }
+        coVerify { mockK8sClient.getSecret(namespace, secretName) }
         assertFalse(result.hasUpdate) // Should continue without auth
     }
     
@@ -960,7 +958,7 @@ class ImageCheckerTest {
         val result = imageChecker.checkForUpdate("docker.io/myapp:v1.0.0", UpdateStrategy.Version(), namespace, secrets)
         
         // Then
-        verify(exactly = 3) { mockK8sClient.getSecret(namespace, any()) }
+        coVerify(exactly = 3) { mockK8sClient.getSecret(namespace, any()) }
         assertFalse(result.hasUpdate)
     }
     
@@ -1032,7 +1030,7 @@ class ImageCheckerTest {
         val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
         
         // Then
-        verify { mockK8sClient.getSecret(namespace, secretName) }
+        coVerify { mockK8sClient.getSecret(namespace, secretName) }
         assertFalse(result.hasUpdate)
     }
     
@@ -1056,7 +1054,7 @@ class ImageCheckerTest {
         val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
         
         // Then
-        verify { mockK8sClient.getSecret(namespace, secretName) }
+        coVerify { mockK8sClient.getSecret(namespace, secretName) }
         assertFalse(result.hasUpdate)
     }
     
@@ -1090,7 +1088,7 @@ class ImageCheckerTest {
         val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
         
         // Then
-        verify { mockK8sClient.getSecret(namespace, secretName) }
+        coVerify { mockK8sClient.getSecret(namespace, secretName) }
         assertFalse(result.hasUpdate)
     }
     

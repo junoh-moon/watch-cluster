@@ -5,11 +5,9 @@ import com.watchcluster.util.ImageParser
 import com.watchcluster.client.K8sClient
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.asCoroutineDispatcher
 import mu.KotlinLogging
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
-import java.util.concurrent.Executors
 
 private val logger = KotlinLogging.logger {}
 
@@ -17,10 +15,6 @@ class DeploymentUpdater(
     private val k8sClient: K8sClient,
     private val webhookService: WebhookService
 ) {
-    private val k8sThreadPool = Executors.newFixedThreadPool(
-        maxOf(4, Runtime.getRuntime().availableProcessors())
-    )
-    private val k8sDispatcher = k8sThreadPool.asCoroutineDispatcher()
 
     suspend fun updateDeployment(namespace: String, name: String, newImage: String, updateResult: ImageUpdateResult? = null) {
         runCatching {
@@ -34,9 +28,8 @@ class DeploymentUpdater(
                 details = mapOf("previousImage" to previousImage)
             ))
             
-            val deployment = withContext(k8sDispatcher) {
-                k8sClient.getDeployment(namespace, name)
-            } ?: throw IllegalStateException("Deployment $namespace/$name not found")
+            val deployment = k8sClient.getDeployment(namespace, name)
+                ?: throw IllegalStateException("Deployment $namespace/$name not found")
             
             val containers = deployment.containers
             if (containers.isEmpty()) {
@@ -63,9 +56,7 @@ class DeploymentUpdater(
             // Create combined patch JSON for both image and annotations
             val patchJson = buildCombinedPatch(containerName to imageToSet, annotationMap )
             
-            withContext(k8sDispatcher) {
-                k8sClient.patchDeployment(namespace, name, patchJson)
-            }?.let { logger.info { "Patch successful - deployment $namespace/$name updated with new image: $imageToSet" } }
+            k8sClient.patchDeployment(namespace, name, patchJson)?.let { logger.info { "Patch successful - deployment $namespace/$name updated with new image: $imageToSet" } }
 			?: run {
                 logger.error { "Patch returned null response for deployment $namespace/$name" }
                 throw IllegalStateException("Patch operation returned null deployment")
@@ -118,9 +109,7 @@ class DeploymentUpdater(
     
     private suspend fun getCurrentImage(namespace: String, name: String): String {
         return runCatching {
-            val deployment = withContext(k8sDispatcher) {
-                k8sClient.getDeployment(namespace, name)
-            }
+            val deployment = k8sClient.getDeployment(namespace, name)
             deployment?.containers?.firstOrNull()?.image ?: "unknown"
         }.getOrElse {
             "unknown"
@@ -138,9 +127,7 @@ class DeploymentUpdater(
             val startTime = System.currentTimeMillis()
             
             while (System.currentTimeMillis() - startTime < timeout) {
-                val deployment = withContext(k8sDispatcher) {
-                    k8sClient.getDeployment(namespace, name)
-                } ?: return
+                val deployment = k8sClient.getDeployment(namespace, name) ?: return
                 val status = deployment.status
                 
                 // Check if controller has observed the latest generation
@@ -213,9 +200,7 @@ class DeploymentUpdater(
     
     private suspend fun verifyPodImages(deployment: com.watchcluster.client.domain.DeploymentInfo, namespace: String, expectedImage: String): Boolean {
         return runCatching {
-            val pods = withContext(k8sDispatcher) {
-                k8sClient.listPodsByLabels(namespace, deployment.selector)
-            }
+            val pods = k8sClient.listPodsByLabels(namespace, deployment.selector)
             
             if (pods.isEmpty()) {
                 logger.warn { "No pods found for deployment $namespace/${deployment.name}" }
@@ -245,7 +230,6 @@ class DeploymentUpdater(
     }
     
     fun shutdown() {
-        k8sDispatcher.close()
-        k8sThreadPool.shutdown()
+        // No resources to clean up anymore
     }
 }

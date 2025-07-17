@@ -6,12 +6,8 @@ import com.watchcluster.model.ImageUpdateResult
 import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.util.ImageParser
 import com.watchcluster.client.K8sClient
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.withContext
 import mu.KotlinLogging
 import java.util.Base64
-import java.util.concurrent.Executors
 
 private val logger = KotlinLogging.logger {}
 
@@ -20,11 +16,6 @@ class ImageChecker(
 ) {
     private val registryClient = DockerRegistryClient()
     private val objectMapper = ObjectMapper()
-    
-    private val k8sThreadPool = Executors.newFixedThreadPool(
-        maxOf(4, Runtime.getRuntime().availableProcessors())
-    )
-    private val k8sDispatcher = k8sThreadPool.asCoroutineDispatcher()
 
     suspend fun checkForUpdate(
         currentImage: String, 
@@ -56,9 +47,7 @@ class ImageChecker(
         
         for (secretName in secretNames) {
             runCatching {
-                val secret = withContext(k8sDispatcher) {
-                    k8sClient.getSecret(namespace, secretName)
-                }
+                val secret = k8sClient.getSecret(namespace, secretName)
                 
                 if (secret?.type == "kubernetes.io/dockerconfigjson") {
                     val dockerConfigJson = secret.data[".dockerconfigjson"] ?: return@runCatching
@@ -313,9 +302,7 @@ class ImageChecker(
             // If we have deployment info, get the digest from deployment spec
             if (namespace != null && deploymentName != null) {
                 // Get the deployment spec image - this is what we should compare against registry
-                val deployment = withContext(k8sDispatcher) {
-                    k8sClient.getDeployment(namespace, deploymentName)
-                }
+                val deployment = k8sClient.getDeployment(namespace, deploymentName)
                 
                 if (deployment != null) {
                     val containerImage = deployment.containers.firstOrNull()?.image
@@ -346,7 +333,6 @@ class ImageChecker(
     }
     
     fun shutdown() {
-        k8sDispatcher.close()
-        k8sThreadPool.shutdown()
+        // DockerRegistryClient doesn't have a close method
     }
 }

@@ -30,17 +30,14 @@ class WatchController(
     private val deploymentMutexes = ConcurrentHashMap<String, Mutex>()
 
     fun start() {
-        val coroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
         logger.info { "Starting deployment watcher..." }
         
         k8sClient.watchDeployments(object : K8sWatcher<com.watchcluster.client.domain.DeploymentInfo> {
-            override fun eventReceived(event: K8sWatchEvent<com.watchcluster.client.domain.DeploymentInfo>) {
+            override suspend fun eventReceived(event: K8sWatchEvent<com.watchcluster.client.domain.DeploymentInfo>) {
                 val deployment = event.resource
                 when (event.type) {
                     EventType.ADDED, EventType.MODIFIED -> {
-                        coroutineScope.async {
-                            handleDeployment(deployment)
-                        }
+                        handleDeployment(deployment)
                     }
                     EventType.DELETED -> {
                         val key = "${deployment.namespace}/${deployment.name}"
@@ -55,7 +52,7 @@ class WatchController(
                 }
             }
 
-            override fun onClose(exception: Exception?) {
+            override suspend fun onClose(exception: Exception?) {
                 logger.warn { "Deployment watch closed: ${exception?.message}" }
             }
         })

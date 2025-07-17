@@ -9,6 +9,7 @@ import io.fabric8.kubernetes.api.model.Secret
 import io.fabric8.kubernetes.client.KubernetesClient
 import io.fabric8.kubernetes.client.Watcher
 import io.fabric8.kubernetes.client.WatcherException
+import kotlinx.coroutines.*
 import mu.KotlinLogging
 import java.util.Base64
 
@@ -18,8 +19,8 @@ class Fabric8K8sClient(
     private val kubernetesClient: KubernetesClient
 ) : K8sClient {
     
-    override fun getDeployment(namespace: String, name: String): DeploymentInfo? {
-        return try {
+    override suspend fun getDeployment(namespace: String, name: String): DeploymentInfo? = withContext(Dispatchers.IO) {
+        try {
             val deployment = kubernetesClient.apps()
                 .deployments()
                 .inNamespace(namespace)
@@ -33,8 +34,8 @@ class Fabric8K8sClient(
         }
     }
     
-    override fun patchDeployment(namespace: String, name: String, patchJson: String): DeploymentInfo? {
-        return try {
+    override suspend fun patchDeployment(namespace: String, name: String, patchJson: String): DeploymentInfo? = withContext(Dispatchers.IO) {
+        try {
             val deployment = kubernetesClient.apps()
                 .deployments()
                 .inNamespace(namespace)
@@ -49,6 +50,8 @@ class Fabric8K8sClient(
     }
     
     override fun watchDeployments(watcher: K8sWatcher<DeploymentInfo>): AutoCloseable {
+        val watchScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        
         val fabric8Watcher = object : Watcher<Deployment> {
             override fun eventReceived(action: Watcher.Action, resource: Deployment) {
                 val eventType = when (action) {
@@ -60,11 +63,23 @@ class Fabric8K8sClient(
                 }
                 
                 val deploymentInfo = mapToDeploymentInfo(resource)
-                watcher.eventReceived(K8sWatchEvent(eventType, deploymentInfo))
+                watchScope.launch {
+                    try {
+                        watcher.eventReceived(K8sWatchEvent(eventType, deploymentInfo))
+                    } catch (e: Exception) {
+                        logger.error(e) { "Error in watcher.eventReceived" }
+                    }
+                }
             }
             
             override fun onClose(cause: WatcherException?) {
-                watcher.onClose(cause)
+                watchScope.launch {
+                    try {
+                        watcher.onClose(cause)
+                    } catch (e: Exception) {
+                        logger.error(e) { "Error in watcher.onClose" }
+                    }
+                }
             }
         }
         
@@ -74,12 +89,13 @@ class Fabric8K8sClient(
             .watch(fabric8Watcher)
         
         return AutoCloseable {
+            watchScope.cancel()
             watch.close()
         }
     }
     
-    override fun getPod(namespace: String, name: String): PodInfo? {
-        return try {
+    override suspend fun getPod(namespace: String, name: String): PodInfo? = withContext(Dispatchers.IO) {
+        try {
             val pod = kubernetesClient.pods()
                 .inNamespace(namespace)
                 .withName(name)
@@ -92,8 +108,8 @@ class Fabric8K8sClient(
         }
     }
     
-    override fun listPodsByLabels(namespace: String, labels: Map<String, String>): List<PodInfo> {
-        return try {
+    override suspend fun listPodsByLabels(namespace: String, labels: Map<String, String>): List<PodInfo> = withContext(Dispatchers.IO) {
+        try {
             val pods = kubernetesClient.pods()
                 .inNamespace(namespace)
                 .withLabels(labels)
@@ -107,8 +123,8 @@ class Fabric8K8sClient(
         }
     }
     
-    override fun getSecret(namespace: String, name: String): SecretInfo? {
-        return try {
+    override suspend fun getSecret(namespace: String, name: String): SecretInfo? = withContext(Dispatchers.IO) {
+        try {
             val secret = kubernetesClient.secrets()
                 .inNamespace(namespace)
                 .withName(name)
@@ -121,8 +137,8 @@ class Fabric8K8sClient(
         }
     }
     
-    override fun getConfiguration(): K8sClientConfig {
-        return K8sClientConfig(
+    override suspend fun getConfiguration(): K8sClientConfig = withContext(Dispatchers.IO) {
+        K8sClientConfig(
             masterUrl = kubernetesClient.configuration.masterUrl
         )
     }

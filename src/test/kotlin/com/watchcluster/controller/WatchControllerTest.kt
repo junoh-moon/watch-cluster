@@ -141,8 +141,10 @@ class WatchControllerTest {
         watchController.start()
         
         val watcher = watcherSlot.captured
-        watcher.onClose(null)
-        watcher.onClose(Exception("test close"))
+        runBlocking {
+            watcher.onClose(null)
+            watcher.onClose(Exception("test close"))
+        }
         
         assertNotNull(watcher)
     }
@@ -266,7 +268,9 @@ class WatchControllerTest {
         )
         
         // Should not throw
-        watcher.eventReceived(K8sWatchEvent(EventType.ERROR, deployment))
+        runBlocking {
+            watcher.eventReceived(K8sWatchEvent(EventType.ERROR, deployment))
+        }
         
         assertNotNull(watcher)
     }

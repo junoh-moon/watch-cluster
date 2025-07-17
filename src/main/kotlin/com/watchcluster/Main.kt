@@ -9,7 +9,7 @@ import mu.KotlinLogging
 
 private val logger = KotlinLogging.logger {}
 
-fun main() {
+fun main() = runBlocking {
     logger.info { "Starting watch-cluster..." }
 
     runCatching {
@@ -37,22 +37,23 @@ fun main() {
 
         val fabric8Client = KubernetesClientBuilder().build()
         val k8sClient = Fabric8K8sClient(fabric8Client)
+        val config = k8sClient.getConfiguration()
         logger.info {
-            "Connected to Kubernetes cluster: ${k8sClient.getConfiguration().masterUrl}"
+            "Connected to Kubernetes cluster: ${config.masterUrl}"
         }
 
         // Get current pod information
         if (podName != "unknown" && podNamespace != "unknown") {
             runCatching {
-                k8sClient.getPod(podNamespace, podName)
-                ?.status
-                ?.containerStatuses
-                ?.forEach { containerStatus ->
-                    logger.info { "Container: ${containerStatus.name}" }
-                    logger.info { "  Image: ${containerStatus.image}" }
-                    logger.info { "  Image ID: ${containerStatus.imageID}" }
-                    logger.info { "  Ready: ${containerStatus.ready}" }
-                }
+                val pod = k8sClient.getPod(podNamespace, podName)
+                pod?.status
+                    ?.containerStatuses
+                    ?.forEach { containerStatus ->
+                        logger.info { "Container: ${containerStatus.name}" }
+                        logger.info { "  Image: ${containerStatus.image}" }
+                        logger.info { "  Image ID: ${containerStatus.imageID}" }
+                        logger.info { "  Ready: ${containerStatus.ready}" }
+                    }
             }.onFailure { e ->
                 logger.warn { "Failed to get pod information: ${e.message}" }
             }
