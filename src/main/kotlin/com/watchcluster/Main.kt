@@ -9,7 +9,7 @@ import mu.KotlinLogging
 
 private val logger = KotlinLogging.logger {}
 
-fun main() = runBlocking {
+fun main(): Unit = runBlocking {
     logger.info { "Starting watch-cluster..." }
 
     runCatching {
