@@ -203,7 +203,7 @@ class ImageCheckerTest {
         // Mock registry to return new digest
         coEvery { mockRegistryClient.getImageDigest(null, "nginx", "latest", any()) } returns registryDigest
         
-        // Mock Kubernetes deployment and pod to return running digest
+        // Mock Kubernetes deployment with current image in spec
         coEvery { mockKubernetesClient.apps() } returns mockk {
             coEvery { deployments() } returns mockk {
                 coEvery { inNamespace(namespace) } returns mockk {
@@ -211,6 +211,15 @@ class ImageCheckerTest {
                         coEvery { get() } returns mockk {
                             every { metadata } returns mockk {
                                 every { annotations } returns null  // No previous digest in annotations
+                            }
+                            every { spec } returns mockk {
+                                every { template } returns mockk {
+                                    every { spec } returns mockk {
+                                        every { containers } returns listOf(mockk {
+                                            every { image } returns "nginx:latest@$runningDigest"  // Deployment spec has old digest
+                                        })
+                                    }
+                                }
                             }
                         }
                     }
@@ -246,10 +255,10 @@ class ImageCheckerTest {
         // When
         val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
         
-        // Then - This test should now PASS with the fix
-        assertTrue(result.hasUpdate, "Should detect update when registry digest differs from running digest")
+        // Then - Should detect update when deployment spec digest differs from registry digest  
+        assertTrue(result.hasUpdate, "Should detect update when deployment spec digest differs from registry digest")
         assertEquals("Latest image has been updated", result.reason)
-        assertEquals(runningDigest, result.currentDigest, "currentDigest should be the running container digest")
+        assertEquals(runningDigest, result.currentDigest, "currentDigest should be the deployment spec digest")
         assertEquals(registryDigest, result.newDigest, "newDigest should be the registry digest")
     }
     
@@ -264,6 +273,27 @@ class ImageCheckerTest {
         
         // Mock registry to return new digest for stable tag
         coEvery { mockRegistryClient.getImageDigest(null, "myapp", "stable", any()) } returns registryDigest
+        
+        // Mock Kubernetes deployment with current image in spec
+        coEvery { mockKubernetesClient.apps() } returns mockk {
+            coEvery { deployments() } returns mockk {
+                coEvery { inNamespace(namespace) } returns mockk {
+                    coEvery { withName(deploymentName) } returns mockk {
+                        coEvery { get() } returns mockk {
+                            every { spec } returns mockk {
+                                every { template } returns mockk {
+                                    every { spec } returns mockk {
+                                        every { containers } returns listOf(mockk {
+                                            every { image } returns "myapp:stable@$runningDigest"
+                                        })
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         
         // Mock pod with running digest
         coEvery { mockKubernetesClient.pods() } returns mockk {
@@ -312,6 +342,27 @@ class ImageCheckerTest {
         // Mock registry to return new digest
         coEvery { mockRegistryClient.getImageDigest(null, "openvinotoolkit/anomalib", "release-openvino", any()) } returns registryDigest
         
+        // Mock Kubernetes deployment with current image in spec
+        coEvery { mockKubernetesClient.apps() } returns mockk {
+            coEvery { deployments() } returns mockk {
+                coEvery { inNamespace(namespace) } returns mockk {
+                    coEvery { withName(deploymentName) } returns mockk {
+                        coEvery { get() } returns mockk {
+                            every { spec } returns mockk {
+                                every { template } returns mockk {
+                                    every { spec } returns mockk {
+                                        every { containers } returns listOf(mockk {
+                                            every { image } returns "openvinotoolkit/anomalib:release-openvino@$runningDigest"
+                                        })
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
         // Mock pod with running digest
         coEvery { mockKubernetesClient.pods() } returns mockk {
             coEvery { inNamespace(namespace) } returns mockk {
@@ -357,6 +408,27 @@ class ImageCheckerTest {
         
         // Mock registry to return same digest
         coEvery { mockRegistryClient.getImageDigest(null, "myapp", "release-candidate", any()) } returns sameDigest
+        
+        // Mock Kubernetes deployment with current image in spec
+        coEvery { mockKubernetesClient.apps() } returns mockk {
+            coEvery { deployments() } returns mockk {
+                coEvery { inNamespace(namespace) } returns mockk {
+                    coEvery { withName(deploymentName) } returns mockk {
+                        coEvery { get() } returns mockk {
+                            every { spec } returns mockk {
+                                every { template } returns mockk {
+                                    every { spec } returns mockk {
+                                        every { containers } returns listOf(mockk {
+                                            every { image } returns "myapp:release-candidate@$sameDigest"
+                                        })
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         
         // Mock pod with same digest
         coEvery { mockKubernetesClient.pods() } returns mockk {
@@ -415,6 +487,27 @@ class ImageCheckerTest {
             
             // Mock registry
             coEvery { mockRegistryClient.getImageDigest(null, "myapp", tag, any()) } returns registryDigest
+            
+            // Mock Kubernetes deployment
+            coEvery { mockKubernetesClient.apps() } returns mockk {
+                coEvery { deployments() } returns mockk {
+                    coEvery { inNamespace(namespace) } returns mockk {
+                        coEvery { withName(deploymentName) } returns mockk {
+                            coEvery { get() } returns mockk {
+                                every { spec } returns mockk {
+                                    every { template } returns mockk {
+                                        every { spec } returns mockk {
+                                            every { containers } returns listOf(mockk {
+                                                every { image } returns "myapp:$tag@$runningDigest"
+                                            })
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             
             // Mock pod
             coEvery { mockKubernetesClient.pods() } returns mockk {

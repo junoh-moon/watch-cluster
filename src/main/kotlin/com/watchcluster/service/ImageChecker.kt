@@ -235,7 +235,7 @@ class ImageChecker(
     
     private suspend fun safeGetCurrentDigest(currentImage: String, dockerAuth: DockerAuth?): String? {
         return runCatching {
-            getCurrentImageDigest(currentImage, dockerAuth)
+            getDeploymentSpecDigest(currentImage, dockerAuth)
         }.getOrElse { e ->
             logger.debug { "Could not get current digest: ${e.message}" }
             null
@@ -266,7 +266,7 @@ class ImageChecker(
         
         return runCatching {
             val registryDigest = getImageDigest(registry, repository, tag, dockerAuth)
-            val currentDigest = getCurrentImageDigest(currentImage, dockerAuth, namespace, deploymentName)
+            val currentDigest = getDeploymentSpecDigest(currentImage, dockerAuth, namespace, deploymentName)
 
             
             if (registryDigest != null && currentDigest != null && registryDigest != currentDigest) {
@@ -311,37 +311,43 @@ class ImageChecker(
         return registryClient.getImageDigest(registry, repository, tag, dockerAuth)
     }
 
-    private suspend fun getCurrentImageDigest(image: String, @Suppress("UNUSED_PARAMETER") dockerAuth: DockerAuth? = null, namespace: String? = null, deploymentName: String? = null): String? {
+    private suspend fun getDeploymentSpecDigest(image: String, @Suppress("UNUSED_PARAMETER") dockerAuth: DockerAuth? = null, namespace: String? = null, deploymentName: String? = null): String? {
         return runCatching {
-            // If we have deployment info, get the actual running digest from Kubernetes
+            // If we have deployment info, get the digest from deployment spec
             if (namespace != null && deploymentName != null) {
-                // Get the running pod's image ID - this is the source of truth
-                val podList = withContext(k8sDispatcher) {
-                    kubernetesClient.pods()
+                // Get the deployment spec image - this is what we should compare against registry
+                val deployment = withContext(k8sDispatcher) {
+                    kubernetesClient.apps()
+                        .deployments()
                         .inNamespace(namespace)
-                        .withLabel("app", deploymentName)
-                        .list()
+                        .withName(deploymentName)
+                        .get()
                 }
                 
-                if (podList.items.isNotEmpty()) {
-                    val pod = podList.items.first()
-                    val containerStatus = pod.status?.containerStatuses?.firstOrNull()
-                    val imageID = containerStatus?.imageID
-                    
-                    if (imageID != null && imageID.contains("@")) {
-                        // Extract digest from imageID (format: docker://image@sha256:...)
-                        val digest = imageID.substringAfter("@")
-                        logger.debug { "Got digest from pod: $digest" }
+                if (deployment != null) {
+                    val containerImage = deployment.spec?.template?.spec?.containers?.firstOrNull()?.image
+                    if (containerImage != null && containerImage.contains("@")) {
+                        // Extract digest from deployment spec image (format: image:tag@sha256:...)
+                        val digest = containerImage.substringAfter("@")
+                        logger.debug { "Got digest from deployment spec: $digest" }
                         return digest
                     }
+                    logger.debug { "No digest in deployment spec image: $containerImage" }
                 }
             }
             
-            // Fallback: if we can't get from K8s, return null to indicate unknown
-            logger.debug { "Cannot determine current digest from Kubernetes for $image" }
+            // Fallback: try to extract digest from the image parameter itself
+            if (image.contains("@")) {
+                val digest = image.substringAfter("@")
+                logger.debug { "Got digest from image parameter: $digest" }
+                return digest
+            }
+            
+            // If no digest found, return null to indicate no digest specified
+            logger.debug { "No digest found for image: $image" }
             null
         }.getOrElse { e ->
-            logger.error(e) { "Error getting current image digest for $image" }
+            logger.error(e) { "Error getting deployment spec digest for $image" }
             null
         }
     }
