@@ -20,7 +20,11 @@ import io.fabric8.kubernetes.api.model.apps.Deployment
 import io.fabric8.kubernetes.client.KubernetesClient
 import io.fabric8.kubernetes.client.Watcher
 import io.fabric8.kubernetes.client.WatcherException
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import mu.KotlinLogging
 import java.util.Base64
 
@@ -36,7 +40,8 @@ class Fabric8K8sClient(
         withContext(Dispatchers.IO) {
             try {
                 val deployment =
-                    kubernetesClient.apps()
+                    kubernetesClient
+                        .apps()
                         .deployments()
                         .inNamespace(namespace)
                         .withName(name)
@@ -57,7 +62,8 @@ class Fabric8K8sClient(
         withContext(Dispatchers.IO) {
             try {
                 val deployment =
-                    kubernetesClient.apps()
+                    kubernetesClient
+                        .apps()
                         .deployments()
                         .inNamespace(namespace)
                         .withName(name)
@@ -110,7 +116,8 @@ class Fabric8K8sClient(
                     }
                 }
 
-            kubernetesClient.apps()
+            kubernetesClient
+                .apps()
                 .deployments()
                 .inAnyNamespace()
                 .watch(fabric8Watcher)
@@ -123,7 +130,8 @@ class Fabric8K8sClient(
         withContext(Dispatchers.IO) {
             try {
                 val pod =
-                    kubernetesClient.pods()
+                    kubernetesClient
+                        .pods()
                         .inNamespace(namespace)
                         .withName(name)
                         .get()
@@ -142,7 +150,8 @@ class Fabric8K8sClient(
         withContext(Dispatchers.IO) {
             try {
                 val pods =
-                    kubernetesClient.pods()
+                    kubernetesClient
+                        .pods()
                         .inNamespace(namespace)
                         .withLabels(labels)
                         .list()
@@ -162,7 +171,8 @@ class Fabric8K8sClient(
         withContext(Dispatchers.IO) {
             try {
                 val secret =
-                    kubernetesClient.secrets()
+                    kubernetesClient
+                        .secrets()
                         .inNamespace(namespace)
                         .withName(name)
                         .get()
@@ -200,7 +210,11 @@ class Fabric8K8sClient(
                         imageID = null,
                     )
                 } ?: emptyList(),
-            imagePullSecrets = spec.template?.spec?.imagePullSecrets?.map { it.name } ?: emptyList(),
+            imagePullSecrets =
+                spec.template
+                    ?.spec
+                    ?.imagePullSecrets
+                    ?.map { it.name } ?: emptyList(),
             annotations = metadata.annotations ?: emptyMap(),
             status = mapToDeploymentStatus(status),
         )

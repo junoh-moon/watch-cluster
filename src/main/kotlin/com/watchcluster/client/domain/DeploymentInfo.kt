@@ -9,7 +9,7 @@ data class DeploymentInfo(
     val containers: List<ContainerInfo>,
     val imagePullSecrets: List<String>,
     val annotations: Map<String, String>,
-    val status: DeploymentStatus
+    val status: DeploymentStatus,
 )
 
 data class DeploymentStatus(
@@ -17,7 +17,7 @@ data class DeploymentStatus(
     val updatedReplicas: Int? = null,
     val readyReplicas: Int? = null,
     val availableReplicas: Int? = null,
-    val conditions: List<DeploymentCondition> = emptyList()
+    val conditions: List<DeploymentCondition> = emptyList(),
 )
 
 data class DeploymentCondition(
@@ -25,5 +25,5 @@ data class DeploymentCondition(
     val status: String,
     val lastUpdateTime: String? = null,
     val reason: String? = null,
-    val message: String? = null
+    val message: String? = null,
 )

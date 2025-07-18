@@ -13,7 +13,9 @@ import com.watchcluster.client.domain.SecretInfo
 import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.util.ImageComponents
 import com.watchcluster.util.ImageParser
-import io.mockk.*
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -22,7 +24,11 @@ import org.junit.jupiter.params.provider.Arguments
 import org.junit.jupiter.params.provider.MethodSource
 import java.util.Base64
 import java.util.stream.Stream
-import kotlin.test.*
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ImageCheckerTest {
     private lateinit var mockDockerClient: DockerClient
@@ -1331,14 +1337,13 @@ class ImageCheckerTest {
             assertFalse(result.hasUpdate)
         }
 
-    private fun parseStrategy(strategyStr: String): UpdateStrategy {
-        return when {
+    private fun parseStrategy(strategyStr: String): UpdateStrategy =
+        when {
             strategyStr.lowercase() == "latest" -> UpdateStrategy.Latest
             strategyStr.contains("lock-major") || strategyStr.contains("lockmajor") ->
                 UpdateStrategy.Version(lockMajorVersion = true)
             else -> UpdateStrategy.Version()
         }
-    }
 
     companion object {
         @JvmStatic

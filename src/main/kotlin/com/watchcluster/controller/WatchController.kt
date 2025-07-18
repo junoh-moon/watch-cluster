@@ -16,7 +16,9 @@ import com.watchcluster.service.DeploymentUpdater
 import com.watchcluster.service.ImageChecker
 import com.watchcluster.service.WebhookService
 import com.watchcluster.util.CronScheduler
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import mu.KotlinLogging
@@ -108,7 +110,10 @@ class WatchController(
         webhookService.sendWebhook(
             WebhookEvent(
                 eventType = WebhookEventType.DEPLOYMENT_DETECTED,
-                timestamp = java.time.Instant.now().toString(),
+                timestamp =
+                    java.time.Instant
+                        .now()
+                        .toString(),
                 deployment = DeploymentEventData(namespace, name, currentImage),
                 details =
                     mapOf(

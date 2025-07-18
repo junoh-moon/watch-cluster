@@ -1,6 +1,5 @@
 package com.watchcluster.client
 
-import com.watchcluster.client.K8sWatcher
 import com.watchcluster.client.domain.DeploymentInfo
 import com.watchcluster.client.domain.K8sClientConfig
 import com.watchcluster.client.domain.PodInfo

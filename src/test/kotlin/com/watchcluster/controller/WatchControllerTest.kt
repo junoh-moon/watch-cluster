@@ -11,11 +11,19 @@ import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.model.WatchClusterAnnotations
 import com.watchcluster.model.WatchedDeployment
 import com.watchcluster.model.WebhookConfig
-import io.mockk.*
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.slot
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import kotlin.test.*
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 class WatchControllerTest {
     private lateinit var mockK8sClient: K8sClient
@@ -292,8 +300,8 @@ class WatchControllerTest {
         image: String,
         annotations: Map<String, String>,
         containers: List<ContainerInfo> = listOf(ContainerInfo("container", image)),
-    ): DeploymentInfo {
-        return DeploymentInfo(
+    ): DeploymentInfo =
+        DeploymentInfo(
             namespace = namespace,
             name = name,
             generation = 1,
@@ -304,5 +312,4 @@ class WatchControllerTest {
             annotations = annotations,
             status = DeploymentStatus(),
         )
-    }
 }
