@@ -1,5 +1,6 @@
 package com.watchcluster.service
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.watchcluster.client.K8sClient
 import com.watchcluster.model.DeploymentEventData
 import com.watchcluster.model.WebhookEvent
@@ -96,34 +97,27 @@ class DeploymentUpdater(
         containerImage: Pair<String, String>,
         annotations: Map<String, String>,
     ): String {
-        val annotationsJson =
-            annotations.entries.joinToString(",\n      ") { (key, value) ->
-                "\"$key\": \"${value.replace("\"", "\\\"")}\""
-            }
-
         val (containerName, imageToSet) = containerImage
 
-        return """
-            {
-              "metadata": {
-                "annotations": {
-                  $annotationsJson
-                }
-              },
-              "spec": {
-                "template": {
-                  "spec": {
-                    "containers": [
-                      {
-                        "name": "$containerName",
-                        "image": "$imageToSet"
-                      }
-                    ]
-                  }
-                }
-              }
-            }
-            """.trimIndent()
+        val patchData = mapOf(
+            "metadata" to mapOf(
+                "annotations" to annotations,
+            ),
+            "spec" to mapOf(
+                "template" to mapOf(
+                    "spec" to mapOf(
+                        "containers" to listOf(
+                            mapOf(
+                                "name" to containerName,
+                                "image" to imageToSet,
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        return objectMapper.writeValueAsString(patchData)
     }
 
     private suspend fun waitForRollout(
@@ -168,8 +162,8 @@ class DeploymentUpdater(
                 // Check if all replicas are updated and ready
                 val replicasReady =
                     updatedReplicas == replicas &&
-                            readyReplicas == replicas &&
-                            availableReplicas == replicas
+                        readyReplicas == replicas &&
+                        availableReplicas == replicas
 
                 if (replicasReady && isAvailable && isComplete) {
                     // Verify actual pod images
@@ -256,7 +250,7 @@ class DeploymentUpdater(
         }
     }
 
-    fun shutdown() {
-        // No resources to clean up anymore
+    companion object {
+        private val objectMapper = ObjectMapper()
     }
 }

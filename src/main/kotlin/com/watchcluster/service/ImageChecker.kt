@@ -362,8 +362,4 @@ class ImageChecker(
             null
         }
     }
-
-    fun shutdown() {
-        // DockerRegistryClient doesn't have a close method
-    }
 }
