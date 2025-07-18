@@ -38,7 +38,7 @@ sealed class UpdateStrategy {
 }
 
 data class ImageUpdateResult(
-    val hasUpdate: Boolean,
+    val hasUpdate: Boolean,  // TODO: replaced by `newImage != null`
     val currentImage: String,
     val newImage: String? = null,
     val reason: String? = null,
@@ -80,7 +80,8 @@ data class WebhookConfig(
                 url = System.getenv("WEBHOOK_URL"),
                 enableDeploymentDetected = System.getenv("WEBHOOK_ENABLE_DEPLOYMENT_DETECTED")?.toBoolean() ?: false,
                 enableImageRolloutStarted = System.getenv("WEBHOOK_ENABLE_IMAGE_ROLLOUT_STARTED")?.toBoolean() ?: false,
-                enableImageRolloutCompleted = System.getenv("WEBHOOK_ENABLE_IMAGE_ROLLOUT_COMPLETED")?.toBoolean() ?: false,
+                enableImageRolloutCompleted = System.getenv("WEBHOOK_ENABLE_IMAGE_ROLLOUT_COMPLETED")?.toBoolean()
+                    ?: false,
                 enableImageRolloutFailed = System.getenv("WEBHOOK_ENABLE_IMAGE_ROLLOUT_FAILED")?.toBoolean() ?: false,
                 headers = headers,
                 timeout = System.getenv("WEBHOOK_TIMEOUT")?.toLongOrNull()?.coerceAtLeast(0L) ?: 10000L,

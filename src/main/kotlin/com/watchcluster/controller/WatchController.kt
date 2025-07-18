@@ -49,6 +49,7 @@ class WatchController(
                         EventType.ADDED, EventType.MODIFIED -> {
                             handleDeployment(deployment)
                         }
+
                         EventType.DELETED -> {
                             val key = "${deployment.namespace}/${deployment.name}"
                             watchedDeployments.remove(key)
@@ -56,6 +57,7 @@ class WatchController(
                             cronScheduler.cancelJob(key)
                             logger.info { "Stopped watching deployment: $key" }
                         }
+
                         EventType.ERROR -> {
                             logger.warn { "Watch error for deployment ${deployment.namespace}/${deployment.name}" }
                         }
@@ -161,9 +163,11 @@ class WatchController(
                             deployment.namespace,
                             deployment.name,
                             updateResult.newImage!!,
-                            updateResult,
+                            updateResult.currentImage,
+                            updateResult.newDigest,
                         )
                     }
+
                     else -> {
                         logger.debug {
                             buildString {

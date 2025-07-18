@@ -8,7 +8,6 @@ import com.watchcluster.client.domain.PodCondition
 import com.watchcluster.client.domain.PodInfo
 import com.watchcluster.client.domain.PodStatus
 import com.watchcluster.model.DeploymentEventData
-import com.watchcluster.model.ImageUpdateResult
 import com.watchcluster.model.WebhookEvent
 import com.watchcluster.model.WebhookEventType
 import io.mockk.coEvery
@@ -118,8 +117,8 @@ class DeploymentUpdaterTest {
 
         val isRolloutComplete =
             updatedReplicas == replicas &&
-                readyReplicas == replicas &&
-                availableReplicas == replicas
+                    readyReplicas == replicas &&
+                    availableReplicas == replicas
 
         assertTrue(isRolloutComplete)
 
@@ -127,8 +126,8 @@ class DeploymentUpdaterTest {
         val incompleteUpdatedReplicas = 2
         val isRolloutIncomplete =
             incompleteUpdatedReplicas == replicas &&
-                readyReplicas == replicas &&
-                availableReplicas == replicas
+                    readyReplicas == replicas &&
+                    availableReplicas == replicas
 
         assertFalse(isRolloutIncomplete)
     }
@@ -182,9 +181,9 @@ class DeploymentUpdaterTest {
 
             coEvery { mockK8sClient.getDeployment(namespace, name) } returns deployment
             coEvery { mockK8sClient.patchDeployment(namespace, name, any()) } returns
-                deployment.copy(
-                    containers = listOf(ContainerInfo("nginx", newImage)),
-                )
+                    deployment.copy(
+                        containers = listOf(ContainerInfo("nginx", newImage)),
+                    )
 
             val pods =
                 listOf(
@@ -202,7 +201,7 @@ class DeploymentUpdaterTest {
             coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to name)) } returns pods
 
             // When
-            deploymentUpdater.updateDeployment(namespace, name, newImage)
+            deploymentUpdater.updateDeployment(namespace, name, newImage, currentImage, null)
 
             // Then
             coVerify { mockK8sClient.getDeployment(namespace, name) }
@@ -235,7 +234,7 @@ class DeploymentUpdaterTest {
 
             // When/Then
             assertFailsWith<IllegalStateException> {
-                deploymentUpdater.updateDeployment(namespace, name, newImage)
+                deploymentUpdater.updateDeployment(namespace, name, newImage, "nginx:1.20.0", null)
             }
 
             coVerify {
@@ -264,16 +263,6 @@ class DeploymentUpdaterTest {
             val newDigest = "sha256:abc123"
             val currentImage = "nginx:1.20.0"
 
-            val updateResult =
-                ImageUpdateResult(
-                    hasUpdate = true,
-                    currentImage = currentImage,
-                    newImage = newImage,
-                    newDigest = newDigest,
-                    currentDigest = "sha256:old123",
-                    reason = "New version available",
-                )
-
             val deployment =
                 com.watchcluster.client.domain.DeploymentInfo(
                     namespace = namespace,
@@ -300,9 +289,9 @@ class DeploymentUpdaterTest {
 
             coEvery { mockK8sClient.getDeployment(namespace, name) } returns deployment
             coEvery { mockK8sClient.patchDeployment(namespace, name, any()) } returns
-                deployment.copy(
-                    containers = listOf(ContainerInfo("nginx", "$newImage@$newDigest")),
-                )
+                    deployment.copy(
+                        containers = listOf(ContainerInfo("nginx", "$newImage@$newDigest")),
+                    )
 
             val pods =
                 listOf(
@@ -320,7 +309,7 @@ class DeploymentUpdaterTest {
             coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to name)) } returns pods
 
             // When
-            deploymentUpdater.updateDeployment(namespace, name, newImage, updateResult)
+            deploymentUpdater.updateDeployment(namespace, name, newImage, currentImage, newDigest)
 
             // Then
             coVerify {
@@ -359,7 +348,7 @@ class DeploymentUpdaterTest {
 
             // When/Then
             assertFailsWith<IllegalStateException> {
-                deploymentUpdater.updateDeployment(namespace, name, newImage)
+                deploymentUpdater.updateDeployment(namespace, name, newImage, "nginx:1.20.0", null)
             }
 
             coVerify {

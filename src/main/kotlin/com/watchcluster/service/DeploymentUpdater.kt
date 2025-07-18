@@ -2,7 +2,6 @@ package com.watchcluster.service
 
 import com.watchcluster.client.K8sClient
 import com.watchcluster.model.DeploymentEventData
-import com.watchcluster.model.ImageUpdateResult
 import com.watchcluster.model.WebhookEvent
 import com.watchcluster.model.WebhookEventType
 import com.watchcluster.util.ImageParser
@@ -20,12 +19,12 @@ class DeploymentUpdater(
         namespace: String,
         name: String,
         newImage: String,
-        updateResult: ImageUpdateResult? = null,
+        previousImage: String,
+        newDigest: String?,
     ) {
         runCatching {
             logger.info { "Updating deployment $namespace/$name with new image: $newImage" }
 
-            val previousImage = getCurrentImage(namespace, name)
             webhookService.sendWebhook(
                 WebhookEvent(
                     eventType = WebhookEventType.IMAGE_ROLLOUT_STARTED,
@@ -51,12 +50,10 @@ class DeploymentUpdater(
             val containerName = containers[0].name
 
             // digest가 있으면 명시적으로 붙여서 배포
-            val imageToSet =
-                updateResult
-                    ?.newDigest
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let { ImageParser.addDigest(newImage, it) }
-                    ?: newImage
+            val imageToSet = newDigest
+                ?.takeIf { it.isNotBlank() }
+                ?.let { ImageParser.addDigest(newImage, it) }
+                ?: newImage
 
             // Prepare annotations for combined update
             val timestamp = ZonedDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
@@ -129,17 +126,6 @@ class DeploymentUpdater(
             """.trimIndent()
     }
 
-    private suspend fun getCurrentImage(
-        namespace: String,
-        name: String,
-    ): String =
-        runCatching {
-            val deployment = k8sClient.getDeployment(namespace, name)
-            deployment?.containers?.firstOrNull()?.image ?: "unknown"
-        }.getOrElse {
-            "unknown"
-        }
-
     private suspend fun waitForRollout(
         namespace: String,
         name: String,
@@ -182,8 +168,8 @@ class DeploymentUpdater(
                 // Check if all replicas are updated and ready
                 val replicasReady =
                     updatedReplicas == replicas &&
-                        readyReplicas == replicas &&
-                        availableReplicas == replicas
+                            readyReplicas == replicas &&
+                            availableReplicas == replicas
 
                 if (replicasReady && isAvailable && isComplete) {
                     // Verify actual pod images
