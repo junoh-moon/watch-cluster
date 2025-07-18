@@ -11,10 +11,8 @@ import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 class WatchClusterIntegrationTest {
     private lateinit var mockDockerRegistryClient: DockerRegistryClient
@@ -37,7 +35,7 @@ class WatchClusterIntegrationTest {
     }
 
     @Test
-    fun `end-to-end image version checking with semver strategy`() =
+    fun `end-to-end image version checking with semver strategy`(): Unit =
         runBlocking {
             // Given - setup a scenario with available tags
             val currentImage = "nginx:1.20.0"
@@ -58,14 +56,14 @@ class WatchClusterIntegrationTest {
                 )
 
             // Then
-            assertTrue(result.hasUpdate)
+            assertNotNull(result.newImage)
             assertEquals("nginx:1.21.0", result.newImage)
             assertEquals(currentImage, result.currentImage)
             assertNotNull(result.reason)
         }
 
     @Test
-    fun `end-to-end image checking with latest strategy`() =
+    fun `end-to-end image checking with latest strategy`(): Unit =
         runBlocking {
             // Given
             val currentImage = "nginx:latest"
@@ -92,7 +90,7 @@ class WatchClusterIntegrationTest {
         }
 
     @Test
-    fun `end-to-end no update when current is latest version`() =
+    fun `end-to-end no update when current is latest version`(): Unit =
         runBlocking {
             // Given
             val currentImage = "nginx:1.21.0"
@@ -111,7 +109,6 @@ class WatchClusterIntegrationTest {
                 )
 
             // Then
-            assertFalse(result.hasUpdate)
             assertNull(result.newImage)
             assertEquals(currentImage, result.currentImage)
             assertNotNull(result.reason)
@@ -139,9 +136,9 @@ class WatchClusterIntegrationTest {
                 )
 
             // Then - should update to 1.21.0 but not 2.0.0
-            assertTrue(result.hasUpdate)
+            assertNotNull(result.newImage)
             assertEquals("nginx:1.21.0", result.newImage)
-            assertFalse(result.newImage!!.contains("2.0.0"))
+            assert(!result.newImage!!.contains("2.0.0"))
         }
 
     @Test
@@ -154,8 +151,22 @@ class WatchClusterIntegrationTest {
             // Note: Authentication extraction requires Kubernetes secrets,
             // so we'll mock the registry calls without auth for this test
             coEvery { mockDockerRegistryClient.getTags("myregistry.com", "myapp", any()) } returns availableTags
-            coEvery { mockDockerRegistryClient.getImageDigest("myregistry.com", "myapp", "1.1.0", any()) } returns "sha256:new123"
-            coEvery { mockDockerRegistryClient.getImageDigest("myregistry.com", "myapp", "1.0.0", any()) } returns "sha256:old123"
+            coEvery {
+                mockDockerRegistryClient.getImageDigest(
+                    "myregistry.com",
+                    "myapp",
+                    "1.1.0",
+                    any()
+                )
+            } returns "sha256:new123"
+            coEvery {
+                mockDockerRegistryClient.getImageDigest(
+                    "myregistry.com",
+                    "myapp",
+                    "1.0.0",
+                    any()
+                )
+            } returns "sha256:old123"
 
             // When
             val result =
@@ -168,7 +179,7 @@ class WatchClusterIntegrationTest {
                 )
 
             // Then
-            assertTrue(result.hasUpdate)
+            assertNotNull(result.newImage)
             assertEquals("myregistry.com/myapp:1.1.0", result.newImage)
         }
 
@@ -191,10 +202,9 @@ class WatchClusterIntegrationTest {
                 )
 
             // Then
-            assertFalse(result.hasUpdate)
             assertNull(result.newImage)
             assertNotNull(result.reason)
-            assertTrue(result.reason!!.contains("No newer version available") || result.reason!!.contains("Error"))
+            assert(result.reason!!.contains("No newer version available") || result.reason!!.contains("Error"))
         }
 
     @Test

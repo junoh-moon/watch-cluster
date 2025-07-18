@@ -38,9 +38,8 @@ sealed class UpdateStrategy {
 }
 
 data class ImageUpdateResult(
-    val hasUpdate: Boolean,  // TODO: replaced by `newImage != null`
     val currentImage: String,
-    val newImage: String? = null,
+    val newImage: String?,  // `newImage != null` means it should be updated
     val reason: String? = null,
     val currentDigest: String? = null,
     val newDigest: String? = null,

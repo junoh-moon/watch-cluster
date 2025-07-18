@@ -33,9 +33,9 @@ class ImageChecker(
             }
         }.getOrElse { e ->
             logger.error(e) { "Error checking image update for $currentImage" }
-            ImageUpdateResult(
-                hasUpdate = false,
+            createImageUpdateResult(
                 currentImage = currentImage,
+                newImage = null,
                 reason = "Error: ${e.message}",
             )
         }
@@ -65,7 +65,7 @@ class ImageChecker(
                     if (authNode == null && registryUrl == "index.docker.io") {
                         authNode = authsNode.get("https://index.docker.io/v1/")
                             ?: authsNode.get("docker.io")
-                            ?: authsNode.get("https://docker.io")
+                                ?: authsNode.get("https://docker.io")
                     }
 
                     if (authNode != null) {
@@ -90,8 +90,8 @@ class ImageChecker(
         val imageComponents =
             parseImageForVersionUpdate(currentImage)
                 ?: return createImageUpdateResult(
-                    hasUpdate = false,
                     currentImage = currentImage,
+                    newImage = null,
                     reason = "Current tag is not a version tag",
                 )
 
@@ -179,8 +179,7 @@ class ImageChecker(
         val currentDigest = safeGetCurrentDigest(currentImage, dockerAuth)
         val newDigest = safeGetImageDigest(imageComponents.registry, imageComponents.repository, newTag, dockerAuth)
 
-        return ImageUpdateResult(
-            hasUpdate = true,
+        return createImageUpdateResult(
             currentImage = currentImage,
             newImage = newImage,
             reason = "Found newer version: $newTag",
@@ -211,22 +210,20 @@ class ImageChecker(
                 "No newer version available"
             }
         return createImageUpdateResult(
-            hasUpdate = false,
             currentImage = currentImage,
+            newImage = null,
             reason = noUpdateReason,
         )
     }
 
     private fun createImageUpdateResult(
-        hasUpdate: Boolean,
         currentImage: String,
-        newImage: String? = null,
+        newImage: String?,
         reason: String,
         currentDigest: String? = null,
         newDigest: String? = null,
     ): ImageUpdateResult =
         ImageUpdateResult(
-            hasUpdate = hasUpdate,
             currentImage = currentImage,
             newImage = newImage,
             reason = reason,
@@ -269,9 +266,9 @@ class ImageChecker(
 
         // Check if this is a version tag - those should use version strategy
         if (ImageParser.isVersionTag(tag)) {
-            return ImageUpdateResult(
-                hasUpdate = false,
+            return createImageUpdateResult(
                 currentImage = currentImage,
+                newImage = null,
                 reason = "Use version strategy for version tags",
             )
         }
@@ -281,8 +278,7 @@ class ImageChecker(
             val currentDigest = getDeploymentSpecDigest(currentImage, dockerAuth, namespace, deploymentName)
 
             if (registryDigest != null && currentDigest != null && registryDigest != currentDigest) {
-                ImageUpdateResult(
-                    hasUpdate = true,
+                createImageUpdateResult(
                     currentImage = currentImage,
                     newImage = currentImage,
                     reason = if (tag == "latest") "Latest image has been updated" else "Tag '$tag' has been updated",
@@ -290,9 +286,9 @@ class ImageChecker(
                     newDigest = registryDigest,
                 )
             } else {
-                ImageUpdateResult(
-                    hasUpdate = false,
+                createImageUpdateResult(
                     currentImage = currentImage,
+                    newImage = null,
                     reason = "Already using the latest image",
                     currentDigest = currentDigest,
                     newDigest = registryDigest,
@@ -300,9 +296,9 @@ class ImageChecker(
             }
         }.getOrElse { e ->
             logger.error(e) { "Error checking image digest for tag '$tag'" }
-            ImageUpdateResult(
-                hasUpdate = false,
+            createImageUpdateResult(
                 currentImage = currentImage,
+                newImage = null,
                 reason = "Error checking digest: ${e.message}",
             )
         }

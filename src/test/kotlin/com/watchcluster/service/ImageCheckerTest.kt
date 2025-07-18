@@ -25,10 +25,10 @@ import org.junit.jupiter.params.provider.MethodSource
 import java.util.Base64
 import java.util.stream.Stream
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 class ImageCheckerTest {
     private lateinit var mockDockerClient: DockerClient
@@ -103,7 +103,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
 
             // Then
-            assertTrue(result.hasUpdate)
+            assertNotNull(result.newImage)
             assertEquals("myapp:v2.0.0", result.newImage)
             assertTrue(result.reason?.contains("Found newer version") == true)
         }
@@ -121,7 +121,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
 
             // Then
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
             assertEquals("No newer version available", result.reason)
         }
 
@@ -138,7 +138,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
 
             // Then
-            assertTrue(result.hasUpdate)
+            assertNotNull(result.newImage)
             assertEquals("myapp:v2.0.0", result.newImage) // Should add v prefix
         }
 
@@ -155,7 +155,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
 
             // Then
-            assertTrue(result.hasUpdate)
+            assertNotNull(result.newImage)
             assertEquals("myapp:2.0.0", result.newImage) // Should remove v prefix
         }
 
@@ -172,7 +172,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
 
             // Then
-            assertTrue(result.hasUpdate)
+            assertNotNull(result.newImage)
             assertEquals("docker.io/nginx:1.21.0", result.newImage)
         }
 
@@ -186,7 +186,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, "default", null)
 
             // Then
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
             assertEquals("Use version strategy for version tags", result.reason)
         }
 
@@ -203,7 +203,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, "default", null)
 
             // Then
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
             assertTrue(result.reason?.contains("Error checking digest") == true)
         }
 
@@ -220,7 +220,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
 
             // Then
-            assertTrue(result.hasUpdate)
+            assertNotNull(result.newImage)
             assertEquals("myapp:v2.0.0", result.newImage) // Should pick v2.0.0, not latest
         }
 
@@ -237,7 +237,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
 
             // Then
-            assertFalse(result.hasUpdate) // No version update from "latest"
+            assertNull(result.newImage) // No version update from "latest"
             assertEquals("Current tag is not a version tag", result.reason)
         }
 
@@ -295,7 +295,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
 
             // Then - Should detect update when deployment spec digest differs from registry digest
-            assertTrue(result.hasUpdate, "Should detect update when deployment spec digest differs from registry digest")
+            assertNotNull(result.newImage, "Should detect update when deployment spec digest differs from registry digest")
             assertEquals("Latest image has been updated", result.reason)
             assertEquals(runningDigest, result.currentDigest, "currentDigest should be the deployment spec digest")
             assertEquals(registryDigest, result.newDigest, "newDigest should be the registry digest")
@@ -355,7 +355,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
 
             // Then
-            assertTrue(result.hasUpdate, "Should detect update when stable tag has different digest")
+            assertNotNull(result.newImage, "Should detect update when stable tag has different digest")
             assertEquals("Tag 'stable' has been updated", result.reason)
             assertEquals(runningDigest, result.currentDigest)
             assertEquals(registryDigest, result.newDigest)
@@ -422,7 +422,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
 
             // Then
-            assertTrue(result.hasUpdate, "Should detect update for release-openvino tag")
+            assertNotNull(result.newImage, "Should detect update for release-openvino tag")
             assertEquals("Tag 'release-openvino' has been updated", result.reason)
             assertEquals(runningDigest, result.currentDigest)
             assertEquals(registryDigest, result.newDigest)
@@ -481,7 +481,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
 
             // Then
-            assertFalse(result.hasUpdate, "Should not update when digest is the same")
+            assertNull(result.newImage, "Should not update when digest is the same")
             assertEquals("Already using the latest image", result.reason)
             assertEquals(sameDigest, result.currentDigest)
             assertEquals(sameDigest, result.newDigest)
@@ -553,7 +553,7 @@ class ImageCheckerTest {
                 val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
 
                 // Then
-                assertTrue(result.hasUpdate, "Should detect update for $tag tag")
+                assertNotNull(result.newImage, "Should detect update for $tag tag")
                 assertEquals("Tag '$tag' has been updated", result.reason)
                 assertEquals(runningDigest, result.currentDigest)
                 assertEquals(registryDigest, result.newDigest)
@@ -572,7 +572,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
 
             // Then
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
             assertTrue(result.reason?.contains("No newer version available") == true || result.reason?.contains("Error") == true)
         }
 
@@ -590,7 +590,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
 
             // Then
-            assertTrue(result.hasUpdate)
+            assertNotNull(result.newImage)
             assertEquals("containrrr/watchtower:v1.0.0", result.newImage)
             assertNotEquals("containrrr/watchtower:v2.0.0", result.newImage)
         }
@@ -703,7 +703,7 @@ class ImageCheckerTest {
                 )
 
             // Then
-            assertTrue(result.hasUpdate)
+            assertNotNull(result.newImage)
             assertEquals("myapp:v1.1.0", result.newImage) // Should update to latest within major version 1
             assertTrue(result.reason?.contains("Found newer version") == true)
         }
@@ -727,7 +727,7 @@ class ImageCheckerTest {
                 )
 
             // Then
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
             assertEquals("No newer version available within major version 1", result.reason)
         }
 
@@ -750,7 +750,7 @@ class ImageCheckerTest {
                 )
 
             // Then
-            assertTrue(result.hasUpdate)
+            assertNotNull(result.newImage)
             assertEquals("myapp:v0.6.0", result.newImage) // Should update within major version 0
         }
 
@@ -773,7 +773,7 @@ class ImageCheckerTest {
                 )
 
             // Then
-            assertTrue(result.hasUpdate)
+            assertNotNull(result.newImage)
             assertEquals("myapp:v2.0.0", result.newImage) // Should update to highest version
         }
 
@@ -796,7 +796,7 @@ class ImageCheckerTest {
                 )
 
             // Then
-            assertTrue(result.hasUpdate)
+            assertNotNull(result.newImage)
             assertEquals("myapp:v1.2.0-rc1", result.newImage) // Should include prerelease within major version
         }
 
@@ -908,7 +908,7 @@ class ImageCheckerTest {
 
             // Then
             coVerify { mockK8sClient.getSecret(namespace, secretName) }
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
         }
 
     @Test
@@ -927,7 +927,7 @@ class ImageCheckerTest {
 
             // Then
             coVerify { mockK8sClient.getSecret(namespace, secretName) }
-            assertFalse(result.hasUpdate) // Should continue without auth
+            assertNull(result.newImage) // Should continue without auth
         }
 
     @Test
@@ -953,7 +953,7 @@ class ImageCheckerTest {
 
             // Then
             coVerify { mockK8sClient.getSecret(namespace, secretName) }
-            assertFalse(result.hasUpdate) // Should continue without auth
+            assertNull(result.newImage) // Should continue without auth
         }
 
     @Test
@@ -968,7 +968,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
 
             // Then
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
             assertTrue(result.reason?.contains("Error") == true || result.reason?.contains("No newer version available") == true)
         }
 
@@ -984,7 +984,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, "default", null)
 
             // Then - should not detect update since current digest is unknown
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
             assertTrue(result.reason?.contains("Already using the latest image") == true)
         }
 
@@ -1021,7 +1021,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
 
             // Then
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
         }
 
     @Test
@@ -1040,7 +1040,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
 
             // Then
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
         }
 
     @Test
@@ -1088,7 +1088,7 @@ class ImageCheckerTest {
 
             // Then
             coVerify(exactly = 3) { mockK8sClient.getSecret(namespace, any()) }
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
         }
 
     @Test
@@ -1103,7 +1103,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
 
             // Then
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
             assertEquals("No newer version available", result.reason)
         }
 
@@ -1119,7 +1119,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, "default", null)
 
             // Then
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
             assertTrue(result.reason?.contains("Error checking digest") == true)
         }
 
@@ -1139,7 +1139,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
 
             // Then
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
         }
 
     @Test
@@ -1165,7 +1165,7 @@ class ImageCheckerTest {
 
             // Then
             coVerify { mockK8sClient.getSecret(namespace, secretName) }
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
         }
 
     @Test
@@ -1191,7 +1191,7 @@ class ImageCheckerTest {
 
             // Then
             coVerify { mockK8sClient.getSecret(namespace, secretName) }
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
         }
 
     @Test
@@ -1228,7 +1228,7 @@ class ImageCheckerTest {
 
             // Then
             coVerify { mockK8sClient.getSecret(namespace, secretName) }
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
         }
 
     @Test
@@ -1243,7 +1243,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
 
             // Then
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
             assertEquals("No newer version available", result.reason)
         }
 
@@ -1260,7 +1260,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Version(), "default", null)
 
             // Then
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
             assertEquals("No newer version available", result.reason)
         }
 
@@ -1297,7 +1297,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
 
             // Then
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
             assertEquals("Already using the latest image", result.reason)
         }
 
@@ -1334,7 +1334,7 @@ class ImageCheckerTest {
             val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
 
             // Then
-            assertFalse(result.hasUpdate)
+            assertNull(result.newImage)
         }
 
     private fun parseStrategy(strategyStr: String): UpdateStrategy =
