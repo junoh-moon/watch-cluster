@@ -152,7 +152,8 @@ class WatchController(
                     )
 
                 when {
-                    updateResult.hasUpdate -> {
+                    // Has update
+                    updateResult.newImage != null -> {
                         logger.info {
                             buildString {
                                 append("Found update for ${deployment.namespace}/${deployment.name}: ${updateResult.newImage}")
@@ -162,7 +163,7 @@ class WatchController(
                         deploymentUpdater.updateDeployment(
                             deployment.namespace,
                             deployment.name,
-                            updateResult.newImage!!,
+                            updateResult.newImage,
                             updateResult.currentImage,
                             updateResult.newDigest,
                         )
