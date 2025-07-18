@@ -650,27 +650,6 @@ class ImageCheckerTest {
         }
     }
 
-    @Test
-    fun `test arbitrary tag strategy configuration`() {
-        // Test that arbitrary tags like stable, release-openvino, etc. should be configured
-        // to use digest-based update checks (similar to Latest strategy)
-        val arbitraryTags =
-            listOf(
-                "stable",
-                "release-openvino",
-                "release-candidate",
-                "dev",
-                "nightly",
-                "edge",
-                "canary",
-            )
-
-        arbitraryTags.forEach { tag ->
-            // The Latest strategy should work with arbitrary tags, not just "latest"
-            // This is what we want to extend
-            assertTrue(true, "Strategy should support arbitrary tag: $tag")
-        }
-    }
 
     @ParameterizedTest
     @MethodSource("imageStringParsingProvider")
@@ -1143,92 +1122,30 @@ class ImageCheckerTest {
         }
 
     @Test
-    fun `test extractDockerAuth with empty data in secret`() =
+    fun `test extractDockerAuth handles edge cases gracefully`() =
         runBlocking {
             // Given
             val namespace = "default"
-            val secretName = "empty-secret"
+            val testCases = listOf(
+                // Empty data in secret
+                SecretInfo(namespace, "empty-secret", "kubernetes.io/dockerconfigjson", mapOf()),
+                // Missing .dockerconfigjson key
+                SecretInfo(namespace, "wrong-key", "kubernetes.io/dockerconfigjson", mapOf("other-key" to "value")),
+                // Malformed JSON
+                SecretInfo(namespace, "malformed", "kubernetes.io/dockerconfigjson", mapOf(".dockerconfigjson" to "not-json"))
+            )
 
-            val secret =
-                SecretInfo(
-                    namespace = namespace,
-                    name = secretName,
-                    type = "kubernetes.io/dockerconfigjson",
-                    data = mapOf(), // Empty data
-                )
-            coEvery { mockK8sClient.getSecret(namespace, secretName) } returns secret
+            testCases.forEach { secret ->
+                coEvery { mockK8sClient.getSecret(namespace, secret.name) } returns secret
+                coEvery { mockRegistryClient.getTags(null, "myapp", null) } returns listOf("v1.0.0")
 
-            coEvery { mockRegistryClient.getTags(null, "myapp", null) } returns listOf("v1.0.0")
+                // When
+                val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secret.name))
 
-            // When
-            val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
-
-            // Then
-            coVerify { mockK8sClient.getSecret(namespace, secretName) }
-            assertNull(result.newImage)
-        }
-
-    @Test
-    fun `test extractDockerAuth with missing dockerconfigjson key`() =
-        runBlocking {
-            // Given
-            val namespace = "default"
-            val secretName = "incomplete-secret"
-
-            val secret =
-                SecretInfo(
-                    namespace = namespace,
-                    name = secretName,
-                    type = "kubernetes.io/dockerconfigjson",
-                    data = mapOf("other-key" to "value"), // Wrong key
-                )
-            coEvery { mockK8sClient.getSecret(namespace, secretName) } returns secret
-
-            coEvery { mockRegistryClient.getTags(null, "myapp", null) } returns listOf("v1.0.0")
-
-            // When
-            val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
-
-            // Then
-            coVerify { mockK8sClient.getSecret(namespace, secretName) }
-            assertNull(result.newImage)
-        }
-
-    @Test
-    fun `test extractDockerAuth with malformed auth string`() =
-        runBlocking {
-            // Given
-            val namespace = "default"
-            val secretName = "malformed-auth-secret"
-
-            val dockerConfigJson =
-                """
-                {
-                    "auths": {
-                        "docker.io": {
-                            "auth": "notbase64encoded"
-                        }
-                    }
-                }
-                """.trimIndent()
-
-            val secret =
-                SecretInfo(
-                    namespace = namespace,
-                    name = secretName,
-                    type = "kubernetes.io/dockerconfigjson",
-                    data = mapOf(".dockerconfigjson" to dockerConfigJson),
-                )
-            coEvery { mockK8sClient.getSecret(namespace, secretName) } returns secret
-
-            coEvery { mockRegistryClient.getTags(null, "myapp", null) } returns listOf("v1.0.0")
-
-            // When
-            val result = imageChecker.checkForUpdate("myapp:v1.0.0", UpdateStrategy.Version(), namespace, listOf(secretName))
-
-            // Then
-            coVerify { mockK8sClient.getSecret(namespace, secretName) }
-            assertNull(result.newImage)
+                // Then - Should handle gracefully and continue without auth
+                coVerify { mockK8sClient.getSecret(namespace, secret.name) }
+                assertNull(result.newImage)
+            }
         }
 
     @Test

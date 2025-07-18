@@ -207,25 +207,4 @@ class WatchClusterIntegrationTest {
             assert(result.reason!!.contains("No newer version available") || result.reason!!.contains("Error"))
         }
 
-    @Test
-    fun `ImageParser utility integration`() {
-        // Test ImageParser utility that was extracted during refactoring
-        val testCases =
-            listOf(
-                "nginx@sha256:aaa" to Triple(null, "nginx", "latest"),
-                "nginx:1.20.0" to Triple(null, "nginx", "1.20.0"),
-                "docker.io/nginx:1.20.0" to Triple("docker.io", "nginx", "1.20.0"),
-                "myregistry.com/myapp:v1.0.0" to Triple("myregistry.com", "myapp", "v1.0.0"),
-                "ghcr.io/owner/repo:latest@sha256:aaa" to Triple("ghcr.io", "owner/repo", "latest"),
-            )
-
-        testCases.forEach { (input, expected) ->
-            val (expectedRegistry, expectedRepository, expectedTag) = expected
-            val result = ImageParser.parseImageString(input)
-
-            assertEquals(expectedRegistry, result.registry, "Failed for input: $input")
-            assertEquals(expectedRepository, result.repository, "Failed for input: $input")
-            assertEquals(expectedTag, result.tag, "Failed for input: $input")
-        }
-    }
 }

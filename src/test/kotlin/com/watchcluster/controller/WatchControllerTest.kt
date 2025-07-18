@@ -44,10 +44,6 @@ class WatchControllerTest {
         watchController = WatchController(mockK8sClient)
     }
 
-    @Test
-    fun `WatchController can be instantiated`() {
-        assertNotNull(watchController)
-    }
 
     @Test
     fun `start() should call kubernetes client watchDeployments`() =
@@ -239,17 +235,6 @@ class WatchControllerTest {
         assertTrue(strategy.lockMajorVersion)
     }
 
-    @Test
-    fun `test default values`() {
-        // Test default values used when annotations are not provided
-        val defaultCronExpression = "0 */5 * * * ?"
-        val defaultStrategyStr = "version"
-        val defaultStrategy = UpdateStrategy.fromString(defaultStrategyStr)
-
-        assertEquals("0 */5 * * * ?", defaultCronExpression)
-        assertTrue(defaultStrategy is UpdateStrategy.Version)
-        assertFalse(defaultStrategy.lockMajorVersion)
-    }
 
     @Test
     fun `test deployment with multiple containers`() {

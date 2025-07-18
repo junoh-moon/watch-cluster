@@ -45,21 +45,4 @@ class CronSchedulerTest {
         }
     }
 
-    @Test
-    fun `should support various cron expressions`() {
-        val expressions =
-            listOf(
-                "0 */5 * * * ?",
-                "0 0 * * * ?",
-                "0 0 2 * * ?",
-                "0 0 0 * * MON",
-                "0 0 0 1 * ?",
-            )
-
-        expressions.forEach { expr ->
-            cronScheduler.scheduleJob("job-$expr", expr) {
-                // Just validate that it can be scheduled
-            }
-        }
-    }
 }

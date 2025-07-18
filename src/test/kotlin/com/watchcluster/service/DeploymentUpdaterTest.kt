@@ -35,28 +35,7 @@ class DeploymentUpdaterTest {
         deploymentUpdater = DeploymentUpdater(mockK8sClient, mockWebhookService)
     }
 
-    @Test
-    fun `DeploymentUpdater can be instantiated`() {
-        // Simple test to verify the class can be created
-        assertNotNull(deploymentUpdater)
-    }
 
-    @Test
-    fun `test image string manipulation logic`() {
-        // Test the core logic that doesn't require complex Kubernetes mocking
-        val imageWithoutDigest = "nginx:1.20.0"
-        val imageWithDigest = "nginx:1.21.0@sha256:abc123"
-
-        // Test basic image name parsing (this would be part of ImageParser utility)
-        assertTrue(imageWithoutDigest.contains(":"))
-        assertTrue(imageWithDigest.contains("@"))
-
-        // Verify the image format we expect to construct
-        val newImage = "nginx:1.21.0"
-        val digest = "sha256:abc123"
-        val expectedImageWithDigest = "$newImage@$digest"
-        assertEquals("nginx:1.21.0@sha256:abc123", expectedImageWithDigest)
-    }
 
     @Test
     fun `test webhook event construction`() {
@@ -132,19 +111,6 @@ class DeploymentUpdaterTest {
         assertFalse(isRolloutIncomplete)
     }
 
-    @Test
-    fun `test timeout calculation`() {
-        val timeout = 300000L // 5 minutes
-        val startTime = System.currentTimeMillis()
-        val currentTime = startTime + 100000L // 100 seconds elapsed
-
-        val hasTimedOut = currentTime - startTime >= timeout
-        assertFalse(hasTimedOut) // Should not have timed out yet
-
-        val timeoutTime = startTime + timeout + 1000L // 1 second past timeout
-        val hasTimedOutNow = timeoutTime - startTime >= timeout
-        assertTrue(hasTimedOutNow) // Should have timed out
-    }
 
     @Test
     fun `test updateDeployment with successful rollout`() =
