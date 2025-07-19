@@ -52,7 +52,7 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
     - name: Run tests with Gradle
-      run: ./gradlew test
+      run: ./gradlew test jacocoTestReport
       env:
         GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.parallel=false"
     - name: Build with Gradle
@@ -65,6 +65,14 @@ jobs:
       with:
         name: test-results
         path: build/test-results/test/
+    - name: Upload coverage reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: coverage-reports
+        path: |
+          build/reports/jacoco/test/html/
+          build/reports/jacoco/test/jacocoTestReport.xml
   
   build:
     needs: test
