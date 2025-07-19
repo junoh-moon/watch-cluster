@@ -8,27 +8,57 @@ data class ImageComponents(
 
 object ImageParser {
     fun parseImageString(image: String): ImageComponents {
+        // Remove digest if present
         val imageWithoutDigest = image.substringBefore("@")
-        val parts = imageWithoutDigest.split(":")
-        val tag = parts.getOrNull(1) ?: "latest"
-        val repoWithRegistry = parts.first()
 
-        val (registry, repository) =
-            when {
-                !repoWithRegistry.contains("/") -> null to repoWithRegistry
-                else -> {
-                    val firstSlash = repoWithRegistry.indexOf("/")
-                    val possibleRegistry = repoWithRegistry.substring(0, firstSlash)
+        // Find the last occurrence of "/" to separate registry/repo from image:tag
+        val lastSlash = imageWithoutDigest.lastIndexOf("/")
+        val (registryAndRepo, imageAndTag) = if (lastSlash == -1) {
+            "" to imageWithoutDigest
+        } else {
+            imageWithoutDigest.take(lastSlash) to imageWithoutDigest.substring(lastSlash + 1)
+        }
+
+        // Extract tag from image:tag part
+        val colonIndex = imageAndTag.indexOf(":")
+        val (imageName, tag) = if (colonIndex == -1) {
+            imageAndTag to "latest"
+        } else {
+            imageAndTag.substring(0, colonIndex) to imageAndTag.substring(colonIndex + 1)
+        }
+
+        // Determine registry and repository
+        val (registry, repository) = when {
+            registryAndRepo.isEmpty() -> null to imageName
+            else -> {
+                val firstSlash = registryAndRepo.indexOf("/")
+                if (firstSlash == -1) {
+                    // Only one part before image name, check if it's a registry
+                    val possibleRegistry = registryAndRepo
                     when {
                         possibleRegistry.contains(".") ||
                             possibleRegistry.contains(":") ||
                             possibleRegistry == "localhost" -> {
-                            possibleRegistry to repoWithRegistry.substring(firstSlash + 1)
+                            possibleRegistry to imageName
                         }
-                        else -> null to repoWithRegistry
+
+                        else -> null to "$registryAndRepo/$imageName"
+                    }
+                } else {
+                    // Multiple parts, first part is registry if it contains special chars
+                    val possibleRegistry = registryAndRepo.substring(0, firstSlash)
+                    when {
+                        possibleRegistry.contains(".") ||
+                            possibleRegistry.contains(":") ||
+                            possibleRegistry == "localhost" -> {
+                            possibleRegistry to "${registryAndRepo.substring(firstSlash + 1)}/$imageName"
+                        }
+
+                        else -> null to "$registryAndRepo/$imageName"
                     }
                 }
             }
+        }
 
         return ImageComponents(registry, repository, tag)
     }
