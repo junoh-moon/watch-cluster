@@ -6,6 +6,7 @@ import com.watchcluster.model.DockerAuth
 import com.watchcluster.model.ImageUpdateResult
 import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.util.ImageParser
+import com.watchcluster.util.compareTo
 import mu.KotlinLogging
 import java.util.Base64
 
@@ -152,12 +153,11 @@ class ImageChecker(
                 .filter { (_, version) ->
                     if (strategy.lockMajorVersion) {
                         val candidateMajor = version.getOrNull(0) ?: 0
-                        candidateMajor == imageComponents.currentMajorVersion &&
-                            ImageParser.compareVersions(version, imageComponents.currentVersion) > 0
+                        candidateMajor == imageComponents.currentMajorVersion && version > imageComponents.currentVersion
                     } else {
-                        ImageParser.compareVersions(version, imageComponents.currentVersion) > 0
+                        version > imageComponents.currentVersion
                     }
-                }.sortedWith { a, b -> ImageParser.compareVersions(b.second, a.second) }
+                }.sortedWith { lhs, rhs -> rhs.second.compareTo(lhs.second) }
 
         return if (newerVersions.isNotEmpty()) {
             val (originalTag, parsedVersion) = newerVersions.first()

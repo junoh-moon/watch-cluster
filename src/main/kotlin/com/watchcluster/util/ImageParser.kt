@@ -78,20 +78,6 @@ object ImageParser {
         return versionPart.split(".").map { it.toIntOrNull() ?: 0 }
     }
 
-    fun compareVersions(
-        v1: List<Int>,
-        v2: List<Int>,
-    ): Int {
-        val maxLength = maxOf(v1.size, v2.size)
-        for (i in 0 until maxLength) {
-            val part1 = v1.getOrNull(i) ?: 0
-            val part2 = v2.getOrNull(i) ?: 0
-            if (part1 != part2) {
-                return part1.compareTo(part2)
-            }
-        }
-        return 0
-    }
 
     fun removeDigest(image: String): String = image.substringBefore("@")
 
@@ -103,3 +89,8 @@ object ImageParser {
         return "$imageWithoutDigest@$digest"
     }
 }
+
+infix operator fun List<Int>.compareTo(other: List<Int>): Int =
+    this.zipLongest(other, 0)
+        .map { (l, r) -> l.compareTo(r) }
+        .firstOrNull { it != 0 } ?: 0

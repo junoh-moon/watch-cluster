@@ -13,6 +13,7 @@ import com.watchcluster.client.domain.SecretInfo
 import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.util.ImageComponents
 import com.watchcluster.util.ImageParser
+import com.watchcluster.util.compareTo
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -603,7 +604,7 @@ class ImageCheckerTest {
         expected: Int,
         description: String,
     ) {
-        val result = ImageParser.compareVersions(v1, v2)
+        val result = v1.compareTo(v2)
         assertEquals(
             if (expected > 0) {
                 1
@@ -1132,7 +1133,7 @@ class ImageCheckerTest {
                 // Missing .dockerconfigjson key
                 SecretInfo(namespace, "wrong-key", "kubernetes.io/dockerconfigjson", mapOf("other-key" to "value")),
                 // Malformed JSON
-                SecretInfo(namespace, "malformed", "kubernetes.io/dockerconfigjson", mapOf(".dockerconfigjson" to "not-json"))
+                SecretInfo(namespace, "malformed", "kubernetes.io/dockerconfigjson", mapOf(".dockerconfigjson" to "not-json")),
             )
 
             testCases.forEach { secret ->
