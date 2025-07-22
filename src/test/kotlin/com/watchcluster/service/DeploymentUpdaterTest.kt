@@ -19,7 +19,6 @@ import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class DeploymentUpdaterTest {
@@ -34,7 +33,6 @@ class DeploymentUpdaterTest {
 
         deploymentUpdater = DeploymentUpdater(mockK8sClient, mockWebhookService)
     }
-
 
 
     @Test
@@ -96,8 +94,8 @@ class DeploymentUpdaterTest {
 
         val isRolloutComplete =
             updatedReplicas == replicas &&
-                    readyReplicas == replicas &&
-                    availableReplicas == replicas
+                readyReplicas == replicas &&
+                availableReplicas == replicas
 
         assertTrue(isRolloutComplete)
 
@@ -105,8 +103,8 @@ class DeploymentUpdaterTest {
         val incompleteUpdatedReplicas = 2
         val isRolloutIncomplete =
             incompleteUpdatedReplicas == replicas &&
-                    readyReplicas == replicas &&
-                    availableReplicas == replicas
+                readyReplicas == replicas &&
+                availableReplicas == replicas
 
         assertFalse(isRolloutIncomplete)
     }
@@ -147,9 +145,9 @@ class DeploymentUpdaterTest {
 
             coEvery { mockK8sClient.getDeployment(namespace, name) } returns deployment
             coEvery { mockK8sClient.patchDeployment(namespace, name, any()) } returns
-                    deployment.copy(
-                        containers = listOf(ContainerInfo("nginx", newImage)),
-                    )
+                deployment.copy(
+                    containers = listOf(ContainerInfo("nginx", newImage)),
+                )
 
             val pods =
                 listOf(
@@ -167,7 +165,7 @@ class DeploymentUpdaterTest {
             coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to name)) } returns pods
 
             // When
-            deploymentUpdater.updateDeployment(namespace, name, newImage, currentImage, null)
+            deploymentUpdater.updateDeployment(namespace, name, newImage, currentImage)
 
             // Then
             coVerify { mockK8sClient.getDeployment(namespace, name) }
@@ -200,7 +198,7 @@ class DeploymentUpdaterTest {
 
             // When/Then
             assertFailsWith<IllegalStateException> {
-                deploymentUpdater.updateDeployment(namespace, name, newImage, "nginx:1.20.0", null)
+                deploymentUpdater.updateDeployment(namespace, name, newImage, "nginx:1.20.0")
             }
 
             coVerify {
@@ -255,9 +253,9 @@ class DeploymentUpdaterTest {
 
             coEvery { mockK8sClient.getDeployment(namespace, name) } returns deployment
             coEvery { mockK8sClient.patchDeployment(namespace, name, any()) } returns
-                    deployment.copy(
-                        containers = listOf(ContainerInfo("nginx", "$newImage@$newDigest")),
-                    )
+                deployment.copy(
+                    containers = listOf(ContainerInfo("nginx", "$newImage@$newDigest")),
+                )
 
             val pods =
                 listOf(
@@ -275,7 +273,7 @@ class DeploymentUpdaterTest {
             coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to name)) } returns pods
 
             // When
-            deploymentUpdater.updateDeployment(namespace, name, newImage, currentImage, newDigest)
+            deploymentUpdater.updateDeployment(namespace, name, "$newImage@$newDigest", currentImage)
 
             // Then
             coVerify {
@@ -314,7 +312,7 @@ class DeploymentUpdaterTest {
 
             // When/Then
             assertFailsWith<IllegalStateException> {
-                deploymentUpdater.updateDeployment(namespace, name, newImage, "nginx:1.20.0", null)
+                deploymentUpdater.updateDeployment(namespace, name, newImage, "nginx:1.20.0")
             }
 
             coVerify {

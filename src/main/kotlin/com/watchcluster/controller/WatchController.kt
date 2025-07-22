@@ -165,7 +165,6 @@ class WatchController(
                             deployment.name,
                             updateResult.newImage,
                             updateResult.currentImage,
-                            updateResult.newDigest,
                         )
                     }
 

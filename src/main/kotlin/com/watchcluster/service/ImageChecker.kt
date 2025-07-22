@@ -116,7 +116,7 @@ class ImageChecker(
         val parsedVersion: List<Int>,
     )
 
-    private suspend fun parseImageForVersionUpdate(currentImage: String): ImageVersionComponents? {
+    private fun parseImageForVersionUpdate(currentImage: String): ImageVersionComponents? {
         val components = ImageParser.parseImageString(currentImage)
         val (registry, repository, tag) = components
 
@@ -181,7 +181,7 @@ class ImageChecker(
 
         return createImageUpdateResult(
             currentImage = currentImage,
-            newImage = newImage,
+            newImage = if (newDigest != null) ImageParser.addDigest(newImage, newDigest) else newImage,
             reason = "Found newer version: $newTag",
             currentDigest = currentDigest,
             newDigest = newDigest,
@@ -280,7 +280,7 @@ class ImageChecker(
             if (registryDigest != null && currentDigest != null && registryDigest != currentDigest) {
                 createImageUpdateResult(
                     currentImage = currentImage,
-                    newImage = currentImage,
+                    newImage = ImageParser.addDigest(currentImage, registryDigest),
                     reason = if (tag == "latest") "Latest image has been updated" else "Tag '$tag' has been updated",
                     currentDigest = currentDigest,
                     newDigest = registryDigest,

@@ -5,7 +5,6 @@ import com.watchcluster.client.K8sClient
 import com.watchcluster.model.DeploymentEventData
 import com.watchcluster.model.WebhookEvent
 import com.watchcluster.model.WebhookEventType
-import com.watchcluster.util.ImageParser
 import mu.KotlinLogging
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -19,12 +18,11 @@ class DeploymentUpdater(
     suspend fun updateDeployment(
         namespace: String,
         name: String,
-        newImage: String,
+        newImageRef: String,
         previousImage: String,
-        newDigest: String?,
     ) {
         runCatching {
-            logger.info { "Updating deployment $namespace/$name with new image: $newImage" }
+            logger.info { "Updating deployment $namespace/$name with new image: $newImageRef" }
 
             webhookService.sendWebhook(
                 WebhookEvent(
@@ -33,7 +31,7 @@ class DeploymentUpdater(
                         java.time.Instant
                             .now()
                             .toString(),
-                    deployment = DeploymentEventData(namespace, name, newImage),
+                    deployment = DeploymentEventData(namespace, name, newImageRef),
                     details = mapOf("previousImage" to previousImage),
                 ),
             )
@@ -50,30 +48,24 @@ class DeploymentUpdater(
             // Get the first container's name (or find the appropriate container)
             val containerName = containers[0].name
 
-            // digest가 있으면 명시적으로 붙여서 배포
-            val imageToSet = newDigest
-                ?.takeIf { it.isNotBlank() }
-                ?.let { ImageParser.addDigest(newImage, it) }
-                ?: newImage
-
             // Prepare annotations for combined update
             val timestamp = ZonedDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
             val annotationMap = mutableMapOf<String, String>()
             annotationMap["watch-cluster.io/last-update"] = timestamp
-            annotationMap["watch-cluster.io/change"] = "$previousImage -> $imageToSet"
+            annotationMap["watch-cluster.io/change"] = "$previousImage -> $newImageRef"
 
             // Create combined patch JSON for both image and annotations
-            val patchJson = buildCombinedPatch(containerName to imageToSet, annotationMap)
+            val patchJson = buildCombinedPatch(containerName to newImageRef, annotationMap)
 
             k8sClient.patchDeployment(namespace, name, patchJson)?.let {
-                logger.info { "Patch successful - deployment $namespace/$name updated with new image: $imageToSet" }
+                logger.info { "Patch successful - deployment $namespace/$name updated with new image: $newImageRef" }
             }
                 ?: run {
                     logger.error { "Patch returned null response for deployment $namespace/$name" }
                     throw IllegalStateException("Patch operation returned null deployment")
                 }
 
-            waitForRollout(namespace, name, imageToSet)
+            waitForRollout(namespace, name, newImageRef)
         }.onFailure { e ->
             logger.error(e) { "Failed to update deployment $namespace/$name" }
 
@@ -84,7 +76,7 @@ class DeploymentUpdater(
                         java.time.Instant
                             .now()
                             .toString(),
-                    deployment = DeploymentEventData(namespace, name, newImage),
+                    deployment = DeploymentEventData(namespace, name, newImageRef),
                     details = mapOf("error" to (e.message ?: "Unknown error")),
                 ),
             )

@@ -4,7 +4,6 @@ import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.service.DockerRegistryClient
 import com.watchcluster.service.ImageChecker
 import com.watchcluster.service.WebhookService
-import com.watchcluster.util.ImageParser
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
@@ -57,7 +56,7 @@ class WatchClusterIntegrationTest {
 
             // Then
             assertNotNull(result.newImage)
-            assertEquals("nginx:1.21.0", result.newImage)
+            assertEquals("nginx:1.21.0@sha256:new123", result.newImage)
             assertEquals(currentImage, result.currentImage)
             assertNotNull(result.reason)
         }
@@ -137,7 +136,7 @@ class WatchClusterIntegrationTest {
 
             // Then - should update to 1.21.0 but not 2.0.0
             assertNotNull(result.newImage)
-            assertEquals("nginx:1.21.0", result.newImage)
+            assertEquals("nginx:1.21.0@sha256:new123", result.newImage)
             assert(!result.newImage!!.contains("2.0.0"))
         }
 
@@ -156,7 +155,7 @@ class WatchClusterIntegrationTest {
                     "myregistry.com",
                     "myapp",
                     "1.1.0",
-                    any()
+                    any(),
                 )
             } returns "sha256:new123"
             coEvery {
@@ -164,7 +163,7 @@ class WatchClusterIntegrationTest {
                     "myregistry.com",
                     "myapp",
                     "1.0.0",
-                    any()
+                    any(),
                 )
             } returns "sha256:old123"
 
@@ -180,7 +179,7 @@ class WatchClusterIntegrationTest {
 
             // Then
             assertNotNull(result.newImage)
-            assertEquals("myregistry.com/myapp:1.1.0", result.newImage)
+            assertEquals("myregistry.com/myapp:1.1.0@sha256:new123", result.newImage)
         }
 
     @Test
