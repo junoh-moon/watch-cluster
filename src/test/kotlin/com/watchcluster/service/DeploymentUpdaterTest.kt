@@ -18,7 +18,6 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DeploymentUpdaterTest {
@@ -82,31 +81,6 @@ class DeploymentUpdaterTest {
         assertEquals(image, annotations["watch-cluster.io/last-update-image"])
         assertEquals(fromDigest, annotations["watch-cluster.io/last-update-from-digest"])
         assertEquals(toDigest, annotations["watch-cluster.io/last-update-to-digest"])
-    }
-
-    @Test
-    fun `test rollout status evaluation logic`() {
-        // Test the logic used to determine if a rollout is complete
-        val replicas = 3
-        val updatedReplicas = 3
-        val readyReplicas = 3
-        val availableReplicas = 3
-
-        val isRolloutComplete =
-            updatedReplicas == replicas &&
-                readyReplicas == replicas &&
-                availableReplicas == replicas
-
-        assertTrue(isRolloutComplete)
-
-        // Test incomplete rollout
-        val incompleteUpdatedReplicas = 2
-        val isRolloutIncomplete =
-            incompleteUpdatedReplicas == replicas &&
-                readyReplicas == replicas &&
-                availableReplicas == replicas
-
-        assertFalse(isRolloutIncomplete)
     }
 
 
