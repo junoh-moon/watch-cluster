@@ -140,6 +140,7 @@ class WatchController(
 
         mutex.withLock {
             runCatching {
+                logger.info { "Current image: ${deployment.currentImage}" }
                 logger.info { "Checking for updates: ${deployment.namespace}/${deployment.name}" }
 
                 val updateResult =
