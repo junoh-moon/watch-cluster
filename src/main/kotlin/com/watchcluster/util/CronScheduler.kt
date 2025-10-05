@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -71,6 +72,11 @@ class CronScheduler {
     fun cancelJob(jobId: String) {
         jobs.remove(jobId)?.cancel()
         logger.debug { "Cancelled job: $jobId" }
+    }
+
+    suspend fun cancelAndJoinJob(jobId: String) {
+        jobs.remove(jobId)?.cancelAndJoin()
+        logger.debug { "Cancelled and joined job: $jobId" }
     }
 
     fun shutdown() {

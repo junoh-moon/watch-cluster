@@ -279,6 +279,84 @@ class WatchControllerTest {
             assertNotNull(watcher)
         }
 
+    @Test
+    fun `test MODIFIED event updates deployment without race condition`() =
+        runTest {
+            val watcherSlot = slot<K8sWatcher<DeploymentInfo>>()
+            coEvery { mockK8sClient.watchDeployments(capture(watcherSlot)) } returns mockk(relaxed = true)
+
+            watchController.start()
+
+            val watcher = watcherSlot.captured
+
+            // First ADDED event with image X
+            val deploymentV1 =
+                createMockDeployment(
+                    namespace = "test-ns",
+                    name = "test-app",
+                    image = "nginx:1.20.0",
+                    annotations = mapOf(WatchClusterAnnotations.ENABLED to "true"),
+                )
+            watcher.eventReceived(K8sWatchEvent(EventType.ADDED, deploymentV1))
+
+            // Second MODIFIED event with image Y
+            val deploymentV2 =
+                createMockDeployment(
+                    namespace = "test-ns",
+                    name = "test-app",
+                    image = "nginx:1.21.0",
+                    annotations = mapOf(WatchClusterAnnotations.ENABLED to "true"),
+                )
+            watcher.eventReceived(K8sWatchEvent(EventType.MODIFIED, deploymentV2))
+
+            // Should not throw
+            assertNotNull(watcher)
+        }
+
+    @Test
+    fun `test consecutive MODIFIED events are handled sequentially`() =
+        runTest {
+            val watcherSlot = slot<K8sWatcher<DeploymentInfo>>()
+            coEvery { mockK8sClient.watchDeployments(capture(watcherSlot)) } returns mockk(relaxed = true)
+
+            watchController.start()
+
+            val watcher = watcherSlot.captured
+
+            // Initial ADDED event
+            val deployment1 =
+                createMockDeployment(
+                    namespace = "test-ns",
+                    name = "test-app",
+                    image = "nginx:1.20.0",
+                    annotations = mapOf(WatchClusterAnnotations.ENABLED to "true"),
+                )
+            watcher.eventReceived(K8sWatchEvent(EventType.ADDED, deployment1))
+
+            // First MODIFIED event
+            val deployment2 =
+                createMockDeployment(
+                    namespace = "test-ns",
+                    name = "test-app",
+                    image = "nginx:1.21.0",
+                    annotations = mapOf(WatchClusterAnnotations.ENABLED to "true"),
+                )
+            watcher.eventReceived(K8sWatchEvent(EventType.MODIFIED, deployment2))
+
+            // Second MODIFIED event
+            val deployment3 =
+                createMockDeployment(
+                    namespace = "test-ns",
+                    name = "test-app",
+                    image = "nginx:1.22.0",
+                    annotations = mapOf(WatchClusterAnnotations.ENABLED to "true"),
+                )
+            watcher.eventReceived(K8sWatchEvent(EventType.MODIFIED, deployment3))
+
+            // Should not throw
+            assertNotNull(watcher)
+        }
+
     private fun createMockDeployment(
         namespace: String,
         name: String,

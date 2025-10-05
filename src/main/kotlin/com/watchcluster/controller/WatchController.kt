@@ -102,11 +102,14 @@ class WatchController(
                 imagePullSecrets = imagePullSecrets,
             )
 
-        watchedDeployments[key] = watchedDeployment
-        deploymentMutexes.computeIfAbsent(key) { Mutex() }
+        val mutex = deploymentMutexes.computeIfAbsent(key) { Mutex() }
 
-        cronScheduler.scheduleJob(key, cronExpression) {
-            checkAndUpdateDeployment(watchedDeployment)
+        mutex.withLock {
+            cronScheduler.cancelAndJoinJob(key)
+            watchedDeployments[key] = watchedDeployment
+            cronScheduler.scheduleJob(key, cronExpression) {
+                checkAndUpdateDeployment(key)
+            }
         }
 
         webhookService.sendWebhook(
@@ -130,8 +133,7 @@ class WatchController(
 
     // parseStrategy method removed - using UpdateStrategy.fromString() directly
 
-    private suspend fun checkAndUpdateDeployment(deployment: WatchedDeployment) {
-        val key = "${deployment.namespace}/${deployment.name}"
+    private suspend fun checkAndUpdateDeployment(key: String) {
         val mutex =
             deploymentMutexes[key] ?: run {
                 logger.warn { "Mutex not found for deployment $key" }
@@ -139,6 +141,13 @@ class WatchController(
             }
 
         mutex.withLock {
+            // Retrieve latest deployment info inside mutex
+            val deployment =
+                watchedDeployments[key] ?: run {
+                    logger.warn { "Deployment not found: $key" }
+                    return@withLock
+                }
+
             runCatching {
                 logger.info { "Current image: ${deployment.currentImage}" }
                 logger.info { "Checking for updates: ${deployment.namespace}/${deployment.name}" }
