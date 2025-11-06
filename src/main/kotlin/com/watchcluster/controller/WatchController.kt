@@ -29,14 +29,17 @@ private val logger = KotlinLogging.logger {}
 class WatchController(
     private val k8sClient: K8sClient,
     private val coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob()),
+    imageChecker: ImageChecker? = null,
+    deploymentUpdater: DeploymentUpdater? = null,
+    cronScheduler: CronScheduler? = null,
 ) {
     private val webhookConfig = WebhookConfig.fromEnvironment()
     private val webhookService = WebhookService(webhookConfig)
-    private val imageChecker = ImageChecker(k8sClient)
-    private val deploymentUpdater = DeploymentUpdater(k8sClient, webhookService)
-    private val cronScheduler = CronScheduler()
-    private val watchedDeployments = ConcurrentHashMap<String, WatchedDeployment>()
-    private val deploymentMutexes = ConcurrentHashMap<String, Mutex>()
+    private val imageChecker = imageChecker ?: ImageChecker(k8sClient)
+    private val deploymentUpdater = deploymentUpdater ?: DeploymentUpdater(k8sClient, webhookService)
+    private val cronScheduler = cronScheduler ?: CronScheduler()
+    internal val watchedDeployments = ConcurrentHashMap<String, WatchedDeployment>()
+    internal val deploymentMutexes = ConcurrentHashMap<String, Mutex>()
 
     suspend fun start() {
         logger.info { "Starting deployment watcher..." }
@@ -133,7 +136,7 @@ class WatchController(
 
     // parseStrategy method removed - using UpdateStrategy.fromString() directly
 
-    private suspend fun checkAndUpdateDeployment(key: String) {
+    internal suspend fun checkAndUpdateDeployment(key: String) {
         val mutex =
             deploymentMutexes[key] ?: run {
                 logger.warn { "Mutex not found for deployment $key" }
@@ -176,6 +179,13 @@ class WatchController(
                             updateResult.newImage,
                             updateResult.currentImage,
                         )
+
+                        // Update cache to reflect the new image
+                        val latest = watchedDeployments[key] ?: deployment
+                        watchedDeployments[key] =
+                            latest.copy(
+                                currentImage = updateResult.newImage,
+                            )
                     }
 
                     else -> {

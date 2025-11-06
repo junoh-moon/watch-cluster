@@ -33,7 +33,6 @@ class DeploymentUpdaterTest {
         deploymentUpdater = DeploymentUpdater(mockK8sClient, mockWebhookService)
     }
 
-
     @Test
     fun `test webhook event construction`() {
         val namespace = "test-namespace"
@@ -82,7 +81,6 @@ class DeploymentUpdaterTest {
         assertEquals(fromDigest, annotations["watch-cluster.io/last-update-from-digest"])
         assertEquals(toDigest, annotations["watch-cluster.io/last-update-to-digest"])
     }
-
 
     @Test
     fun `test updateDeployment with successful rollout`() =
@@ -175,7 +173,8 @@ class DeploymentUpdaterTest {
                 deploymentUpdater.updateDeployment(namespace, name, newImage, "nginx:1.20.0")
             }
 
-            coVerify {
+            // IMAGE_ROLLOUT_STARTED is not sent because getDeployment fails first
+            coVerify(exactly = 0) {
                 mockWebhookService.sendWebhook(
                     match {
                         it.eventType == WebhookEventType.IMAGE_ROLLOUT_STARTED

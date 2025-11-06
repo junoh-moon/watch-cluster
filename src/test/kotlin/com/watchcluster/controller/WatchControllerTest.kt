@@ -7,6 +7,7 @@ import com.watchcluster.client.domain.DeploymentInfo
 import com.watchcluster.client.domain.DeploymentStatus
 import com.watchcluster.client.domain.EventType
 import com.watchcluster.client.domain.K8sWatchEvent
+import com.watchcluster.model.ImageUpdateResult
 import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.model.WatchClusterAnnotations
 import com.watchcluster.model.WatchedDeployment
@@ -43,7 +44,6 @@ class WatchControllerTest {
 
         watchController = WatchController(mockK8sClient)
     }
-
 
     @Test
     fun `start() should call kubernetes client watchDeployments`() =
@@ -235,7 +235,6 @@ class WatchControllerTest {
         assertTrue(strategy.lockMajorVersion)
     }
 
-
     @Test
     fun `test deployment with multiple containers`() {
         val deployment =
@@ -355,6 +354,97 @@ class WatchControllerTest {
 
             // Should not throw
             assertNotNull(watcher)
+        }
+
+    @Test
+    fun `should not duplicate update when cache is properly updated after deployment update`() =
+        runTest {
+            // Given: Mock dependencies
+            val mockImageChecker = mockk<com.watchcluster.service.ImageChecker>()
+            val mockDeploymentUpdater = mockk<com.watchcluster.service.DeploymentUpdater>(relaxed = true)
+            val mockCronScheduler = mockk<com.watchcluster.util.CronScheduler>(relaxed = true)
+
+            val currentImageCaptures = mutableListOf<String>()
+
+            // Setup: ImageChecker returns update if current image is v2.2.2, otherwise no update
+            coEvery {
+                mockImageChecker.checkForUpdate(
+                    capture(currentImageCaptures),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                )
+            } answers {
+                val currentImage = currentImageCaptures.last()
+                if (currentImage.contains("v2.2.2")) {
+                    ImageUpdateResult(
+                        currentImage = currentImage,
+                        newImage = "ghcr.io/immich-app/immich-server:v2.2.3@sha256:new",
+                        reason = "Found newer version: v2.2.3",
+                    )
+                } else {
+                    ImageUpdateResult(
+                        currentImage = currentImage,
+                        newImage = null,
+                        reason = "Already at latest version",
+                    )
+                }
+            }
+
+            // Setup: DeploymentUpdater succeeds
+            coEvery { mockDeploymentUpdater.updateDeployment(any(), any(), any(), any()) } returns Unit
+
+            // Create WatchController with mocked dependencies
+            val controller =
+                WatchController(
+                    mockK8sClient,
+                    imageChecker = mockImageChecker,
+                    deploymentUpdater = mockDeploymentUpdater,
+                    cronScheduler = mockCronScheduler,
+                )
+
+            // Manually add deployment to cache (simulating handleDeployment)
+            val deployment =
+                WatchedDeployment(
+                    namespace = "immich",
+                    name = "immich-server",
+                    cronExpression = "0 */10 * * * ?",
+                    updateStrategy = UpdateStrategy.Version(),
+                    currentImage = "ghcr.io/immich-app/immich-server:v2.2.2@sha256:old",
+                    imagePullSecrets = emptyList(),
+                )
+            controller.watchedDeployments["immich/immich-server"] = deployment
+            controller.deploymentMutexes["immich/immich-server"] = kotlinx.coroutines.sync.Mutex()
+
+            // When: Execute cron job twice by calling checkAndUpdateDeployment directly
+
+            // First execution: should trigger update (v2.2.2 → v2.2.3)
+            controller.checkAndUpdateDeployment("immich/immich-server")
+
+            // Second execution: should NOT trigger update
+            // [BEFORE FIX] Cache still has v2.2.2, triggers duplicate update
+            // [AFTER FIX] Cache has v2.2.3, no update needed
+            controller.checkAndUpdateDeployment("immich/immich-server")
+
+            // Then: DeploymentUpdater should be called only ONCE
+            // [BEFORE FIX] Called twice (fails test)
+            // [AFTER FIX] Called once (passes test)
+            coVerify(exactly = 1) {
+                mockDeploymentUpdater.updateDeployment(
+                    "immich",
+                    "immich-server",
+                    "ghcr.io/immich-app/immich-server:v2.2.3@sha256:new",
+                    any(),
+                )
+            }
+
+            // Verify that second check received the updated image
+            // [BEFORE FIX] Second check receives v2.2.2 (stale cache)
+            // [AFTER FIX] Second check receives v2.2.3 (fresh cache)
+            assertEquals(2, currentImageCaptures.size)
+            assertTrue(currentImageCaptures[0].contains("v2.2.2"), "First check should see v2.2.2")
+            assertTrue(currentImageCaptures[1].contains("v2.2.3"), "Second check should see v2.2.3 after cache update")
         }
 
     private fun createMockDeployment(

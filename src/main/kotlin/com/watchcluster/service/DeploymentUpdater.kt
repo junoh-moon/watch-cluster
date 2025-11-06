@@ -22,6 +22,24 @@ class DeploymentUpdater(
         previousImage: String,
     ) {
         runCatching {
+            // Fetch current deployment state first
+            val deployment =
+                k8sClient.getDeployment(namespace, name)
+                    ?: throw IllegalStateException("Deployment $namespace/$name not found")
+
+            val containers = deployment.containers
+            if (containers.isEmpty()) {
+                throw IllegalStateException("No containers found in deployment $namespace/$name")
+            }
+
+            val actualCurrentImage = containers[0].image
+
+            // Idempotence check: skip if already at target image
+            if (actualCurrentImage == newImageRef) {
+                logger.info { "Deployment $namespace/$name already at $newImageRef, skipping update" }
+                return
+            }
+
             logger.info { "Updating deployment $namespace/$name with new image: $newImageRef" }
 
             webhookService.sendWebhook(
@@ -32,18 +50,9 @@ class DeploymentUpdater(
                             .now()
                             .toString(),
                     deployment = DeploymentEventData(namespace, name, newImageRef),
-                    details = mapOf("previousImage" to previousImage),
+                    details = mapOf("previousImage" to actualCurrentImage),
                 ),
             )
-
-            val deployment =
-                k8sClient.getDeployment(namespace, name)
-                    ?: throw IllegalStateException("Deployment $namespace/$name not found")
-
-            val containers = deployment.containers
-            if (containers.isEmpty()) {
-                throw IllegalStateException("No containers found in deployment $namespace/$name")
-            }
 
             // Get the first container's name (or find the appropriate container)
             val containerName = containers[0].name
@@ -91,23 +100,29 @@ class DeploymentUpdater(
     ): String {
         val (containerName, imageToSet) = containerImage
 
-        val patchData = mapOf(
-            "metadata" to mapOf(
-                "annotations" to annotations,
-            ),
-            "spec" to mapOf(
-                "template" to mapOf(
-                    "spec" to mapOf(
-                        "containers" to listOf(
-                            mapOf(
-                                "name" to containerName,
-                                "image" to imageToSet,
-                            ),
-                        ),
+        val patchData =
+            mapOf(
+                "metadata" to
+                    mapOf(
+                        "annotations" to annotations,
                     ),
-                ),
-            ),
-        )
+                "spec" to
+                    mapOf(
+                        "template" to
+                            mapOf(
+                                "spec" to
+                                    mapOf(
+                                        "containers" to
+                                            listOf(
+                                                mapOf(
+                                                    "name" to containerName,
+                                                    "image" to imageToSet,
+                                                ),
+                                            ),
+                                    ),
+                            ),
+                    ),
+            )
 
         return objectMapper.writeValueAsString(patchData)
     }
