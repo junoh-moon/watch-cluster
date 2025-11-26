@@ -3,6 +3,7 @@ package com.watchcluster.service
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.watchcluster.client.K8sClient
 import com.watchcluster.model.DeploymentEventData
+import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.model.WebhookEvent
 import com.watchcluster.model.WebhookEventType
 import mu.KotlinLogging
@@ -20,6 +21,8 @@ class DeploymentUpdater(
         name: String,
         newImageRef: String,
         previousImage: String,
+        strategy: UpdateStrategy,
+        expectedDigest: String? = null,
     ) {
         runCatching {
             // Fetch current deployment state first
@@ -35,7 +38,8 @@ class DeploymentUpdater(
             val actualCurrentImage = containers[0].image
 
             // Idempotence check: skip if already at target image
-            if (actualCurrentImage == newImageRef) {
+            // For Latest strategy, we always proceed since we rely on annotation changes to trigger rollout
+            if (strategy !is UpdateStrategy.Latest && actualCurrentImage == newImageRef) {
                 logger.info { "Deployment $namespace/$name already at $newImageRef, skipping update" }
                 return
             }
@@ -64,7 +68,7 @@ class DeploymentUpdater(
             annotationMap["watch-cluster.io/change"] = "$previousImage -> $newImageRef"
 
             // Create combined patch JSON for both image and annotations
-            val patchJson = buildCombinedPatch(containerName to newImageRef, annotationMap)
+            val patchJson = buildCombinedPatch(containerName to newImageRef, annotationMap, strategy)
 
             k8sClient.patchDeployment(namespace, name, patchJson)?.let {
                 logger.info { "Patch successful - deployment $namespace/$name updated with new image: $newImageRef" }
@@ -74,7 +78,7 @@ class DeploymentUpdater(
                     throw IllegalStateException("Patch operation returned null deployment")
                 }
 
-            waitForRollout(namespace, name, newImageRef)
+            waitForRollout(namespace, name, newImageRef, strategy, expectedDigest)
         }.onFailure { e ->
             logger.error(e) { "Failed to update deployment $namespace/$name" }
 
@@ -97,8 +101,26 @@ class DeploymentUpdater(
     private fun buildCombinedPatch(
         containerImage: Pair<String, String>,
         annotations: Map<String, String>,
+        strategy: UpdateStrategy,
     ): String {
         val (containerName, imageToSet) = containerImage
+
+        val containerPatch =
+            mutableMapOf<String, Any>(
+                "name" to containerName,
+                "image" to imageToSet,
+            )
+
+        // For Latest strategy, set imagePullPolicy to Always to ensure fresh image pull
+        if (strategy is UpdateStrategy.Latest) {
+            containerPatch["imagePullPolicy"] = "Always"
+        }
+
+        // Pod template annotations - these trigger rollout when changed
+        val podTemplateAnnotations =
+            mapOf(
+                "watch-cluster.io/last-update" to (annotations["watch-cluster.io/last-update"] ?: ""),
+            )
 
         val patchData =
             mapOf(
@@ -110,15 +132,13 @@ class DeploymentUpdater(
                     mapOf(
                         "template" to
                             mapOf(
+                                "metadata" to
+                                    mapOf(
+                                        "annotations" to podTemplateAnnotations,
+                                    ),
                                 "spec" to
                                     mapOf(
-                                        "containers" to
-                                            listOf(
-                                                mapOf(
-                                                    "name" to containerName,
-                                                    "image" to imageToSet,
-                                                ),
-                                            ),
+                                        "containers" to listOf(containerPatch),
                                     ),
                             ),
                     ),
@@ -131,6 +151,8 @@ class DeploymentUpdater(
         namespace: String,
         name: String,
         newImage: String,
+        strategy: UpdateStrategy,
+        expectedDigest: String?,
     ) {
         runCatching {
             logger.info { "Waiting for rollout to complete..." }
@@ -174,7 +196,7 @@ class DeploymentUpdater(
 
                 if (replicasReady && isAvailable && isComplete) {
                     // Verify actual pod images
-                    val allPodsUpdated = verifyPodImages(deployment, namespace, newImage)
+                    val allPodsUpdated = verifyPodImages(deployment, namespace, newImage, strategy, expectedDigest)
 
                     if (allPodsUpdated) {
                         logger.info { "Rollout completed successfully - all pods running image: $newImage" }
@@ -221,6 +243,8 @@ class DeploymentUpdater(
         deployment: com.watchcluster.client.domain.DeploymentInfo,
         namespace: String,
         expectedImage: String,
+        strategy: UpdateStrategy,
+        expectedDigest: String?,
     ): Boolean {
         return runCatching {
             val pods = k8sClient.listPodsByLabels(namespace, deployment.selector)
@@ -230,21 +254,38 @@ class DeploymentUpdater(
                 return false
             }
 
+            val targetContainerName = deployment.containers.firstOrNull()?.name
+
             val allPodsUpdated =
                 pods.all { pod ->
                     val podReady =
                         pod.status.conditions
                             .find { it.type == "Ready" }
                             ?.status == "True"
-                    val containerImages = pod.containers.map { it.image }
-                    val hasCorrectImage =
-                        containerImages.any { image ->
-                            image == expectedImage
-                        }
 
-                    if (!hasCorrectImage) {
-                        logger.debug { "Pod ${pod.name} has images: $containerImages, expected: $expectedImage" }
-                    }
+                    val hasCorrectImage =
+                        if (strategy is UpdateStrategy.Latest && expectedDigest != null) {
+                            // For Latest strategy, verify using imageID digest
+                            val containerStatus =
+                                pod.status.containerStatuses
+                                    .find { it.name == targetContainerName }
+                            val imageID = containerStatus?.imageID
+                            val podDigest = imageID?.substringAfter("@", "")
+
+                            val matches = podDigest == expectedDigest
+                            if (!matches) {
+                                logger.debug { "Pod ${pod.name} imageID digest: $podDigest, expected: $expectedDigest" }
+                            }
+                            matches
+                        } else {
+                            // For Version strategy or if no digest, verify using image string
+                            val containerImages = pod.containers.map { it.image }
+                            val matches = containerImages.any { image -> image == expectedImage }
+                            if (!matches) {
+                                logger.debug { "Pod ${pod.name} has images: $containerImages, expected: $expectedImage" }
+                            }
+                            matches
+                        }
 
                     podReady && hasCorrectImage
                 }

@@ -393,7 +393,7 @@ class WatchControllerTest {
             }
 
             // Setup: DeploymentUpdater succeeds
-            coEvery { mockDeploymentUpdater.updateDeployment(any(), any(), any(), any()) } returns Unit
+            coEvery { mockDeploymentUpdater.updateDeployment(any(), any(), any(), any(), any()) } returns Unit
 
             // Create WatchController with mocked dependencies
             val controller =
@@ -435,6 +435,7 @@ class WatchControllerTest {
                     "immich",
                     "immich-server",
                     "ghcr.io/immich-app/immich-server:v2.2.3@sha256:new",
+                    any(),
                     any(),
                 )
             }

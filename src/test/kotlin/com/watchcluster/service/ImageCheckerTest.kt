@@ -297,6 +297,7 @@ class ImageCheckerTest {
 
             // Then - Should detect update when deployment spec digest differs from registry digest
             assertNotNull(result.newImage, "Should detect update when deployment spec digest differs from registry digest")
+            assertEquals("nginx:latest", result.newImage, "newImage should NOT contain digest for latest strategy")
             assertEquals("Latest image has been updated", result.reason)
             assertEquals(runningDigest, result.currentDigest, "currentDigest should be the deployment spec digest")
             assertEquals(registryDigest, result.newDigest, "newDigest should be the registry digest")
@@ -357,6 +358,7 @@ class ImageCheckerTest {
 
             // Then
             assertNotNull(result.newImage, "Should detect update when stable tag has different digest")
+            assertEquals("myapp:stable", result.newImage, "newImage should NOT contain digest for latest strategy")
             assertEquals("Tag 'stable' has been updated", result.reason)
             assertEquals(runningDigest, result.currentDigest)
             assertEquals(registryDigest, result.newDigest)
@@ -424,6 +426,11 @@ class ImageCheckerTest {
 
             // Then
             assertNotNull(result.newImage, "Should detect update for release-openvino tag")
+            assertEquals(
+                "openvinotoolkit/anomalib:release-openvino",
+                result.newImage,
+                "newImage should NOT contain digest for latest strategy",
+            )
             assertEquals("Tag 'release-openvino' has been updated", result.reason)
             assertEquals(runningDigest, result.currentDigest)
             assertEquals(registryDigest, result.newDigest)
@@ -555,6 +562,7 @@ class ImageCheckerTest {
 
                 // Then
                 assertNotNull(result.newImage, "Should detect update for $tag tag")
+                assertEquals("myapp:$tag", result.newImage, "newImage should NOT contain digest for latest strategy")
                 assertEquals("Tag '$tag' has been updated", result.reason)
                 assertEquals(runningDigest, result.currentDigest)
                 assertEquals(registryDigest, result.newDigest)
@@ -650,7 +658,6 @@ class ImageCheckerTest {
             assertEquals(expected, result, "Failed for input: $input")
         }
     }
-
 
     @ParameterizedTest
     @MethodSource("imageStringParsingProvider")
@@ -1127,14 +1134,15 @@ class ImageCheckerTest {
         runBlocking {
             // Given
             val namespace = "default"
-            val testCases = listOf(
-                // Empty data in secret
-                SecretInfo(namespace, "empty-secret", "kubernetes.io/dockerconfigjson", mapOf()),
-                // Missing .dockerconfigjson key
-                SecretInfo(namespace, "wrong-key", "kubernetes.io/dockerconfigjson", mapOf("other-key" to "value")),
-                // Malformed JSON
-                SecretInfo(namespace, "malformed", "kubernetes.io/dockerconfigjson", mapOf(".dockerconfigjson" to "not-json")),
-            )
+            val testCases =
+                listOf(
+                    // Empty data in secret
+                    SecretInfo(namespace, "empty-secret", "kubernetes.io/dockerconfigjson", mapOf()),
+                    // Missing .dockerconfigjson key
+                    SecretInfo(namespace, "wrong-key", "kubernetes.io/dockerconfigjson", mapOf("other-key" to "value")),
+                    // Malformed JSON
+                    SecretInfo(namespace, "malformed", "kubernetes.io/dockerconfigjson", mapOf(".dockerconfigjson" to "not-json")),
+                )
 
             testCases.forEach { secret ->
                 coEvery { mockK8sClient.getSecret(namespace, secret.name) } returns secret

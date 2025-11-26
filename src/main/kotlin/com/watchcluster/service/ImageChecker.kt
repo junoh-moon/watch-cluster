@@ -66,7 +66,7 @@ class ImageChecker(
                     if (authNode == null && registryUrl == "index.docker.io") {
                         authNode = authsNode.get("https://index.docker.io/v1/")
                             ?: authsNode.get("docker.io")
-                                ?: authsNode.get("https://docker.io")
+                            ?: authsNode.get("https://docker.io")
                     }
 
                     if (authNode != null) {
@@ -280,7 +280,7 @@ class ImageChecker(
             if (registryDigest != null && currentDigest != null && registryDigest != currentDigest) {
                 createImageUpdateResult(
                     currentImage = currentImage,
-                    newImage = ImageParser.addDigest(currentImage, registryDigest),
+                    newImage = ImageParser.removeDigest(currentImage),
                     reason = if (tag == "latest") "Latest image has been updated" else "Tag '$tag' has been updated",
                     currentDigest = currentDigest,
                     newDigest = registryDigest,
@@ -344,6 +344,21 @@ class ImageChecker(
                         return digest
                     }
                     logger.debug { "No digest in deployment spec image: $containerImage" }
+
+                    // Fallback: try to get digest from running pod's imageID
+                    val pods = k8sClient.listPodsByLabels(namespace, deployment.selector)
+                    val targetContainerName = deployment.containers.firstOrNull()?.name
+                    for (pod in pods) {
+                        val containerStatus =
+                            pod.status.containerStatuses.find { it.name == targetContainerName }
+                        val imageID = containerStatus?.imageID
+                        if (imageID != null && imageID.contains("@")) {
+                            val digest = imageID.substringAfter("@")
+                            logger.debug { "Got digest from pod imageID: $digest" }
+                            return digest
+                        }
+                    }
+                    logger.debug { "No digest found in pod imageIDs" }
                 }
             }
 

@@ -8,6 +8,7 @@ import com.watchcluster.client.domain.PodCondition
 import com.watchcluster.client.domain.PodInfo
 import com.watchcluster.client.domain.PodStatus
 import com.watchcluster.model.DeploymentEventData
+import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.model.WebhookEvent
 import com.watchcluster.model.WebhookEventType
 import io.mockk.coEvery
@@ -137,7 +138,7 @@ class DeploymentUpdaterTest {
             coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to name)) } returns pods
 
             // When
-            deploymentUpdater.updateDeployment(namespace, name, newImage, currentImage)
+            deploymentUpdater.updateDeployment(namespace, name, newImage, currentImage, UpdateStrategy.Version())
 
             // Then
             coVerify { mockK8sClient.getDeployment(namespace, name) }
@@ -170,7 +171,7 @@ class DeploymentUpdaterTest {
 
             // When/Then
             assertFailsWith<IllegalStateException> {
-                deploymentUpdater.updateDeployment(namespace, name, newImage, "nginx:1.20.0")
+                deploymentUpdater.updateDeployment(namespace, name, newImage, "nginx:1.20.0", UpdateStrategy.Version())
             }
 
             // IMAGE_ROLLOUT_STARTED is not sent because getDeployment fails first
@@ -246,7 +247,7 @@ class DeploymentUpdaterTest {
             coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to name)) } returns pods
 
             // When
-            deploymentUpdater.updateDeployment(namespace, name, "$newImage@$newDigest", currentImage)
+            deploymentUpdater.updateDeployment(namespace, name, "$newImage@$newDigest", currentImage, UpdateStrategy.Version())
 
             // Then
             coVerify {
@@ -285,13 +286,151 @@ class DeploymentUpdaterTest {
 
             // When/Then
             assertFailsWith<IllegalStateException> {
-                deploymentUpdater.updateDeployment(namespace, name, newImage, "nginx:1.20.0")
+                deploymentUpdater.updateDeployment(namespace, name, newImage, "nginx:1.20.0", UpdateStrategy.Version())
             }
 
             coVerify {
                 mockWebhookService.sendWebhook(
                     match {
                         it.eventType == WebhookEventType.IMAGE_ROLLOUT_FAILED
+                    },
+                )
+            }
+        }
+
+    @Test
+    fun `test updateDeployment with Latest strategy sets imagePullPolicy to Always`() =
+        runBlocking {
+            // Given
+            val namespace = "test-namespace"
+            val name = "test-deployment"
+            val newImage = "nginx:latest"
+            val currentImage = "nginx:latest"
+
+            val deployment =
+                com.watchcluster.client.domain.DeploymentInfo(
+                    namespace = namespace,
+                    name = name,
+                    generation = 1,
+                    replicas = 1,
+                    selector = mapOf("app" to name),
+                    containers = listOf(ContainerInfo("nginx", currentImage)),
+                    imagePullSecrets = emptyList(),
+                    annotations = mapOf(),
+                    status =
+                        DeploymentStatus(
+                            observedGeneration = 1,
+                            updatedReplicas = 1,
+                            readyReplicas = 1,
+                            availableReplicas = 1,
+                            conditions =
+                                listOf(
+                                    DeploymentCondition("Progressing", "True", reason = "NewReplicaSetAvailable"),
+                                    DeploymentCondition("Available", "True"),
+                                ),
+                        ),
+                )
+
+            coEvery { mockK8sClient.getDeployment(namespace, name) } returns deployment
+            coEvery { mockK8sClient.patchDeployment(namespace, name, any()) } returns
+                deployment.copy(
+                    containers = listOf(ContainerInfo("nginx", newImage)),
+                )
+
+            val pods =
+                listOf(
+                    PodInfo(
+                        namespace = namespace,
+                        name = "test-pod-1",
+                        containers = listOf(ContainerInfo("nginx", newImage)),
+                        status =
+                            PodStatus(
+                                phase = "Running",
+                                conditions = listOf(PodCondition("Ready", "True")),
+                            ),
+                    ),
+                )
+            coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to name)) } returns pods
+
+            // When
+            deploymentUpdater.updateDeployment(namespace, name, newImage, currentImage, UpdateStrategy.Latest)
+
+            // Then - verify imagePullPolicy: Always is in the patch
+            coVerify {
+                mockK8sClient.patchDeployment(
+                    namespace,
+                    name,
+                    match {
+                        it.contains("\"imagePullPolicy\":\"Always\"")
+                    },
+                )
+            }
+        }
+
+    @Test
+    fun `test updateDeployment with Version strategy does not set imagePullPolicy`() =
+        runBlocking {
+            // Given
+            val namespace = "test-namespace"
+            val name = "test-deployment"
+            val newImage = "nginx:1.21.0"
+            val currentImage = "nginx:1.20.0"
+
+            val deployment =
+                com.watchcluster.client.domain.DeploymentInfo(
+                    namespace = namespace,
+                    name = name,
+                    generation = 1,
+                    replicas = 1,
+                    selector = mapOf("app" to name),
+                    containers = listOf(ContainerInfo("nginx", currentImage)),
+                    imagePullSecrets = emptyList(),
+                    annotations = mapOf(),
+                    status =
+                        DeploymentStatus(
+                            observedGeneration = 1,
+                            updatedReplicas = 1,
+                            readyReplicas = 1,
+                            availableReplicas = 1,
+                            conditions =
+                                listOf(
+                                    DeploymentCondition("Progressing", "True", reason = "NewReplicaSetAvailable"),
+                                    DeploymentCondition("Available", "True"),
+                                ),
+                        ),
+                )
+
+            coEvery { mockK8sClient.getDeployment(namespace, name) } returns deployment
+            coEvery { mockK8sClient.patchDeployment(namespace, name, any()) } returns
+                deployment.copy(
+                    containers = listOf(ContainerInfo("nginx", newImage)),
+                )
+
+            val pods =
+                listOf(
+                    PodInfo(
+                        namespace = namespace,
+                        name = "test-pod-1",
+                        containers = listOf(ContainerInfo("nginx", newImage)),
+                        status =
+                            PodStatus(
+                                phase = "Running",
+                                conditions = listOf(PodCondition("Ready", "True")),
+                            ),
+                    ),
+                )
+            coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to name)) } returns pods
+
+            // When
+            deploymentUpdater.updateDeployment(namespace, name, newImage, currentImage, UpdateStrategy.Version())
+
+            // Then - verify imagePullPolicy is NOT in the patch
+            coVerify {
+                mockK8sClient.patchDeployment(
+                    namespace,
+                    name,
+                    match {
+                        !it.contains("imagePullPolicy")
                     },
                 )
             }

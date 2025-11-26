@@ -178,6 +178,8 @@ class WatchController(
                             deployment.name,
                             updateResult.newImage,
                             updateResult.currentImage,
+                            deployment.updateStrategy,
+                            updateResult.newDigest,
                         )
 
                         // Update cache to reflect the new image
