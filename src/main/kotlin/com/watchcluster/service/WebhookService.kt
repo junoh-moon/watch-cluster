@@ -1,6 +1,7 @@
 package com.watchcluster.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.watchcluster.model.WebhookConfig
 import com.watchcluster.model.WebhookEvent
@@ -25,7 +26,10 @@ class WebhookService(
             .connectTimeout(Duration.ofMillis(webhookConfig.timeout))
             .build()
 
-    private val objectMapper = ObjectMapper().registerKotlinModule()
+    private val objectMapper =
+        ObjectMapper()
+            .registerKotlinModule()
+            .enable(SerializationFeature.INDENT_OUTPUT)
 
     suspend fun sendWebhook(event: WebhookEvent) {
         if (webhookConfig.url.isNullOrBlank()) {
