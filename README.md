@@ -54,6 +54,16 @@ kubectl apply -f k8s/configmap.yaml
 kubectl apply -f k8s/deployment.yaml
 ```
 
+### Upgrading Existing Installations
+
+When upgrading an existing watch-cluster installation, re-apply the RBAC manifest before relying on update checks:
+
+```bash
+kubectl apply -f k8s/rbac.yaml
+```
+
+The `latest` strategy resolves the node platform before comparing image digests, so the watch-cluster ServiceAccount needs `get` access to core `nodes`. Without this permission, platform digest lookup can fail and arbitrary-tag updates may be skipped.
+
 ### Verify Installation
 
 ```bash
@@ -123,10 +133,16 @@ spec:
 To run the same check that would normally happen on the next cron execution, add the `watch-cluster.io/check-now` annotation to a monitored Deployment:
 
 ```bash
-kubectl annotate deployment my-app watch-cluster.io/check-now=true
+kubectl annotate deployment -n my-namespace my-app watch-cluster.io/check-now=true --overwrite
 ```
 
 watch-cluster removes the annotation after it observes the request, runs one check using the Deployment's existing strategy, and records Kubernetes Events for the request and result.
+
+You can inspect the audit trail with:
+
+```bash
+kubectl get events -n my-namespace --sort-by=.metadata.creationTimestamp
+```
 
 ### Update Strategies
 

@@ -54,6 +54,16 @@ kubectl apply -f k8s/configmap.yaml
 kubectl apply -f k8s/deployment.yaml
 ```
 
+### 기존 설치 업그레이드
+
+이미 설치된 watch-cluster를 업그레이드하는 경우, 업데이트 확인을 기대하기 전에 RBAC 매니페스트를 다시 적용하십시오:
+
+```bash
+kubectl apply -f k8s/rbac.yaml
+```
+
+`latest` 전략은 이미지 다이제스트를 비교하기 전에 노드 플랫폼을 확인하므로 watch-cluster ServiceAccount에 core `nodes` 리소스 `get` 권한이 필요합니다. 이 권한이 없으면 platform digest 조회가 실패하여 임의 태그 업데이트가 건너뛰어질 수 있습니다.
+
 ### 설치 확인
 
 ```bash
@@ -123,10 +133,16 @@ spec:
 다음 cron 실행을 기다리지 않고 동일한 확인을 한 번 실행하려면 모니터링 중인 Deployment에 `watch-cluster.io/check-now` annotation을 추가합니다:
 
 ```bash
-kubectl annotate deployment my-app watch-cluster.io/check-now=true
+kubectl annotate deployment -n my-namespace my-app watch-cluster.io/check-now=true --overwrite
 ```
 
 watch-cluster는 요청을 감지하면 annotation을 제거하고, Deployment의 기존 전략으로 한 번 확인한 뒤 요청과 결과를 Kubernetes Event로 기록합니다.
+
+감사 내역은 다음 명령으로 확인할 수 있습니다:
+
+```bash
+kubectl get events -n my-namespace --sort-by=.metadata.creationTimestamp
+```
 
 ### 업데이트 전략
 
