@@ -4,6 +4,7 @@ import com.watchcluster.client.domain.DeploymentInfo
 import com.watchcluster.client.domain.K8sClientConfig
 import com.watchcluster.client.domain.PodInfo
 import com.watchcluster.client.domain.SecretInfo
+import com.watchcluster.model.ImagePlatform
 
 interface K8sClient {
     // Deployment operations
@@ -36,6 +37,9 @@ interface K8sClient {
         namespace: String,
         name: String,
     ): SecretInfo?
+
+    // Node operations
+    suspend fun getNodePlatform(nodeName: String): ImagePlatform? = null
 
     // Configuration
     suspend fun getConfiguration(): K8sClientConfig

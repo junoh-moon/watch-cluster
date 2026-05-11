@@ -5,6 +5,7 @@ data class PodInfo(
     val name: String,
     val containers: List<ContainerInfo>,
     val status: PodStatus,
+    val nodeName: String? = null,
 )
 
 data class PodStatus(

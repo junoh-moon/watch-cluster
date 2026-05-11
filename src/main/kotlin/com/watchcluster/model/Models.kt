@@ -39,7 +39,7 @@ sealed class UpdateStrategy {
 
 data class ImageUpdateResult(
     val currentImage: String,
-    val newImage: String?,  // `newImage != null` means it should be updated
+    val newImage: String?, // `newImage != null` means it should be updated
     val reason: String? = null,
     val currentDigest: String? = null,
     val newDigest: String? = null,
@@ -48,6 +48,12 @@ data class ImageUpdateResult(
 data class DockerAuth(
     val username: String,
     val password: String,
+)
+
+data class ImagePlatform(
+    val os: String,
+    val architecture: String,
+    val variant: String? = null,
 )
 
 data class WebhookConfig(
@@ -79,8 +85,9 @@ data class WebhookConfig(
                 url = System.getenv("WEBHOOK_URL"),
                 enableDeploymentDetected = System.getenv("WEBHOOK_ENABLE_DEPLOYMENT_DETECTED")?.toBoolean() ?: false,
                 enableImageRolloutStarted = System.getenv("WEBHOOK_ENABLE_IMAGE_ROLLOUT_STARTED")?.toBoolean() ?: false,
-                enableImageRolloutCompleted = System.getenv("WEBHOOK_ENABLE_IMAGE_ROLLOUT_COMPLETED")?.toBoolean()
-                    ?: false,
+                enableImageRolloutCompleted =
+                    System.getenv("WEBHOOK_ENABLE_IMAGE_ROLLOUT_COMPLETED")?.toBoolean()
+                        ?: false,
                 enableImageRolloutFailed = System.getenv("WEBHOOK_ENABLE_IMAGE_ROLLOUT_FAILED")?.toBoolean() ?: false,
                 headers = headers,
                 timeout = System.getenv("WEBHOOK_TIMEOUT")?.toLongOrNull()?.coerceAtLeast(0L) ?: 10000L,

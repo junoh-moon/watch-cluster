@@ -1,5 +1,6 @@
 package com.watchcluster.service
 
+import com.watchcluster.model.ImagePlatform
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -17,7 +18,6 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DockerRegistryClientTest {
@@ -183,6 +183,119 @@ class DockerRegistryClientTest {
         }
 
     @Test
+    fun `test getImageDigest from Docker Hub returns platform manifest digest when platform is specified`() =
+        runBlocking {
+            // Given
+            val repository = "nginx"
+            val tag = "alpine"
+            val indexDigest = "sha256:index"
+            val amd64Digest = "sha256:amd64"
+            val arm64Digest = "sha256:arm64"
+            val responseBody =
+                """
+                {
+                    "digest": "$indexDigest",
+                    "images": [
+                        {
+                            "architecture": "amd64",
+                            "os": "linux",
+                            "digest": "$amd64Digest"
+                        },
+                        {
+                            "architecture": "arm64",
+                            "os": "linux",
+                            "variant": "v8",
+                            "digest": "$arm64Digest"
+                        }
+                    ]
+                }
+                """.trimIndent()
+
+            val response =
+                Response
+                    .Builder()
+                    .request(Request.Builder().url("http://test").build())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body(responseBody.toResponseBody("application/json".toMediaType()))
+                    .build()
+
+            every { mockClient.newCall(any()) } returns mockCall
+            coEvery { mockCall.await() } returns response
+
+            // When
+            val digest =
+                registryClient.getImageDigest(
+                    null,
+                    repository,
+                    tag,
+                    platform = ImagePlatform(os = "linux", architecture = "amd64"),
+                )
+
+            // Then
+            assertEquals(amd64Digest, digest)
+        }
+
+    @Test
+    fun `test getImageDigest from Docker Hub resolves digest reference to platform manifest digest`() =
+        runBlocking {
+            // Given
+            val repository = "nginx"
+            val indexDigest = "sha256:index"
+            val amd64Digest = "sha256:amd64"
+            val tokenResponse =
+                Response
+                    .Builder()
+                    .request(Request.Builder().url("http://token").build())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body("""{"token":"test-token"}""".toResponseBody("application/json".toMediaType()))
+                    .build()
+            val manifestResponse =
+                Response
+                    .Builder()
+                    .request(Request.Builder().url("http://manifest").build())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .header("Docker-Content-Digest", indexDigest)
+                    .body(
+                        """
+                        {
+                            "schemaVersion": 2,
+                            "mediaType": "application/vnd.oci.image.index.v1+json",
+                            "manifests": [
+                                {
+                                    "digest": "$amd64Digest",
+                                    "platform": {
+                                        "architecture": "amd64",
+                                        "os": "linux"
+                                    }
+                                }
+                            ]
+                        }
+                        """.trimIndent().toResponseBody("application/json".toMediaType()),
+                    ).build()
+
+            every { mockClient.newCall(any()) } returns mockCall
+            coEvery { mockCall.await() } returnsMany listOf(tokenResponse, manifestResponse)
+
+            // When
+            val digest =
+                registryClient.getImageDigest(
+                    null,
+                    repository,
+                    indexDigest,
+                    platform = ImagePlatform(os = "linux", architecture = "amd64"),
+                )
+
+            // Then
+            assertEquals(amd64Digest, digest)
+        }
+
+    @Test
     fun `test getImageDigest from generic registry using header`() =
         runBlocking {
             // Given
@@ -265,5 +378,4 @@ class DockerRegistryClientTest {
             assertTrue(tags.isEmpty())
             coVerify { mockGHCRStrategy.getTags(repository, null) }
         }
-
 }

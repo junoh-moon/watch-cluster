@@ -10,6 +10,7 @@ import com.watchcluster.client.domain.K8sClientConfig
 import com.watchcluster.client.domain.PodInfo
 import com.watchcluster.client.domain.PodStatus
 import com.watchcluster.client.domain.SecretInfo
+import com.watchcluster.model.ImagePlatform
 import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.util.ImageComponents
 import com.watchcluster.util.ImageParser
@@ -71,6 +72,8 @@ class ImageCheckerTest {
             namespace: String,
             name: String,
         ): SecretInfo? = secretResponse
+
+        override suspend fun getNodePlatform(nodeName: String): ImagePlatform? = null
 
         override suspend fun getConfiguration(): K8sClientConfig = K8sClientConfig("https://kubernetes.default.svc")
     }
@@ -493,6 +496,69 @@ class ImageCheckerTest {
             assertEquals("Already using the latest image", result.reason)
             assertEquals(sameDigest, result.currentDigest)
             assertEquals(sameDigest, result.newDigest)
+        }
+
+    @Test
+    fun `test latest strategy does not update when platform manifest digest is unchanged`() =
+        runBlocking {
+            // Given
+            val currentImage = "nginx:alpine"
+            val currentIndexDigest = "sha256:old-index"
+            val platformDigest = "sha256:linux-amd64"
+            val namespace = "default"
+            val deploymentName = "cv-server"
+            val platform = ImagePlatform(os = "linux", architecture = "amd64")
+
+            coEvery {
+                mockRegistryClient.getImageDigest(null, "nginx", "alpine", any(), platform)
+            } returns platformDigest
+            coEvery {
+                mockRegistryClient.getImageDigest(null, "nginx", currentIndexDigest, any(), platform)
+            } returns platformDigest
+
+            val deployment =
+                DeploymentInfo(
+                    namespace = namespace,
+                    name = deploymentName,
+                    generation = 1,
+                    replicas = 1,
+                    selector = mapOf("app" to deploymentName),
+                    containers = listOf(ContainerInfo("nginx", currentImage)),
+                    imagePullSecrets = emptyList(),
+                    annotations = mapOf(),
+                    status = DeploymentStatus(),
+                )
+            coEvery { mockK8sClient.getDeployment(namespace, deploymentName) } returns deployment
+
+            val pod =
+                PodInfo(
+                    namespace = namespace,
+                    name = "cv-server-pod",
+                    nodeName = "n100",
+                    containers = listOf(ContainerInfo("nginx", currentImage)),
+                    status =
+                        PodStatus(
+                            containerStatuses =
+                                listOf(
+                                    ContainerStatus(
+                                        name = "nginx",
+                                        image = currentImage,
+                                        imageID = "docker.io/library/nginx@$currentIndexDigest",
+                                    ),
+                                ),
+                        ),
+                )
+            coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to deploymentName)) } returns listOf(pod)
+            coEvery { mockK8sClient.getNodePlatform("n100") } returns platform
+
+            // When
+            val result = imageChecker.checkForUpdate(currentImage, UpdateStrategy.Latest, namespace, null, deploymentName)
+
+            // Then
+            assertNull(result.newImage, "Should not update when the platform manifest digest is unchanged")
+            assertEquals("Already using the latest image", result.reason)
+            assertEquals(platformDigest, result.currentDigest)
+            assertEquals(platformDigest, result.newDigest)
         }
 
     @Test

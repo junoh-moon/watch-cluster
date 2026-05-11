@@ -2,12 +2,14 @@ package com.watchcluster.service
 
 import com.watchcluster.client.K8sClient
 import com.watchcluster.client.domain.ContainerInfo
+import com.watchcluster.client.domain.ContainerStatus
 import com.watchcluster.client.domain.DeploymentCondition
 import com.watchcluster.client.domain.DeploymentStatus
 import com.watchcluster.client.domain.PodCondition
 import com.watchcluster.client.domain.PodInfo
 import com.watchcluster.client.domain.PodStatus
 import com.watchcluster.model.DeploymentEventData
+import com.watchcluster.model.ImagePlatform
 import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.model.WebhookEvent
 import com.watchcluster.model.WebhookEventType
@@ -362,6 +364,95 @@ class DeploymentUpdaterTest {
                     name,
                     match {
                         it.contains("\"imagePullPolicy\":\"Always\"")
+                    },
+                )
+            }
+        }
+
+    @Test
+    fun `test latest rollout verification compares platform manifest digest`() =
+        runBlocking {
+            // Given
+            val namespace = "test-namespace"
+            val name = "test-deployment"
+            val image = "nginx:alpine"
+            val currentIndexDigest = "sha256:index"
+            val platformDigest = "sha256:linux-amd64"
+            val platform = ImagePlatform(os = "linux", architecture = "amd64")
+            val mockRegistryClient = mockk<DockerRegistryClient>()
+            val updater =
+                DeploymentUpdater(
+                    mockK8sClient,
+                    mockWebhookService,
+                    registryClient = mockRegistryClient,
+                    rolloutTimeoutMs = 1_000L,
+                    rolloutPollIntervalMs = 10L,
+                )
+
+            val deployment =
+                com.watchcluster.client.domain.DeploymentInfo(
+                    namespace = namespace,
+                    name = name,
+                    generation = 1,
+                    replicas = 1,
+                    selector = mapOf("app" to name),
+                    containers = listOf(ContainerInfo("nginx", image)),
+                    imagePullSecrets = emptyList(),
+                    annotations = mapOf(),
+                    status =
+                        DeploymentStatus(
+                            observedGeneration = 1,
+                            updatedReplicas = 1,
+                            readyReplicas = 1,
+                            availableReplicas = 1,
+                            conditions =
+                                listOf(
+                                    DeploymentCondition("Progressing", "True", reason = "NewReplicaSetAvailable"),
+                                    DeploymentCondition("Available", "True"),
+                                ),
+                        ),
+                )
+
+            coEvery { mockK8sClient.getDeployment(namespace, name) } returns deployment
+            coEvery { mockK8sClient.patchDeployment(namespace, name, any()) } returns deployment
+            coEvery { mockK8sClient.getNodePlatform("n100") } returns platform
+            coEvery {
+                mockRegistryClient.getImageDigest(null, "nginx", currentIndexDigest, any(), platform)
+            } returns platformDigest
+
+            val pods =
+                listOf(
+                    PodInfo(
+                        namespace = namespace,
+                        name = "test-pod-1",
+                        nodeName = "n100",
+                        containers = listOf(ContainerInfo("nginx", image)),
+                        status =
+                            PodStatus(
+                                phase = "Running",
+                                conditions = listOf(PodCondition("Ready", "True")),
+                                containerStatuses =
+                                    listOf(
+                                        ContainerStatus(
+                                            name = "nginx",
+                                            image = image,
+                                            imageID = "docker.io/library/nginx@$currentIndexDigest",
+                                            ready = true,
+                                        ),
+                                    ),
+                            ),
+                    ),
+                )
+            coEvery { mockK8sClient.listPodsByLabels(namespace, mapOf("app" to name)) } returns pods
+
+            // When
+            updater.updateDeployment(namespace, name, image, image, UpdateStrategy.Latest, platformDigest)
+
+            // Then
+            coVerify {
+                mockWebhookService.sendWebhook(
+                    match {
+                        it.eventType == WebhookEventType.IMAGE_ROLLOUT_COMPLETED
                     },
                 )
             }

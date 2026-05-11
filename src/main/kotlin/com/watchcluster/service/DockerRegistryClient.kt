@@ -1,9 +1,11 @@
 package com.watchcluster.service
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.watchcluster.model.DockerAuth
+import com.watchcluster.model.ImagePlatform
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -11,6 +13,7 @@ import mu.KotlinLogging
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Credentials
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -117,15 +120,16 @@ class DockerRegistryClient {
         repository: String,
         tag: String,
         dockerAuth: DockerAuth? = null,
+        platform: ImagePlatform? = null,
     ): String? =
         withContext(Dispatchers.IO) {
-            logger.debug { "Getting image digest for registry=$registry, repository=$repository, tag=$tag" }
+            logger.debug { "Getting image digest for registry=$registry, repository=$repository, tag=$tag, platform=$platform" }
             runCatching {
                 val digest =
                     when {
                         registry == null || registry == "docker.io" -> {
                             logger.debug { "Using Docker Hub for digest lookup" }
-                            getDockerHubDigest(repository, tag, dockerAuth)
+                            getDockerHubDigest(repository, tag, dockerAuth, platform)
                         }
                         registry.contains("ghcr.io") -> {
                             logger.debug { "Using GitHub Container Registry for digest lookup" }
@@ -133,7 +137,7 @@ class DockerRegistryClient {
                         }
                         else -> {
                             logger.debug { "Using generic registry for digest lookup" }
-                            getGenericRegistryDigest(registry, repository, tag, dockerAuth)
+                            getGenericRegistryDigest(registry, repository, tag, dockerAuth, platform)
                         }
                     }
                 logger.debug { "Retrieved digest: $digest" }
@@ -218,8 +222,14 @@ class DockerRegistryClient {
         repository: String,
         tag: String,
         dockerAuth: DockerAuth?,
+        platform: ImagePlatform?,
     ): String? {
         val namespace = if (repository.contains("/")) repository else "library/$repository"
+
+        if (platform != null && isDigestReference(tag)) {
+            return getDockerHubPlatformDigestForReference(namespace, tag, dockerAuth, platform)
+        }
+
         val url = "https://hub.docker.com/v2/repositories/$namespace/tags/$tag/"
         logger.debug { "Fetching Docker Hub digest from: $url" }
 
@@ -245,10 +255,37 @@ class DockerRegistryClient {
             val body = response.body?.string() ?: return null
             logger.debug { "Docker Hub response body: $body" }
             val tagInfo = mapper.readTree(body)
+            platform?.let {
+                val platformDigest = findPlatformDigest(tagInfo.get("images"), it)
+                if (platformDigest != null) {
+                    logger.debug { "Extracted Docker Hub platform digest: $platformDigest" }
+                    return platformDigest
+                }
+            }
             val digest = tagInfo.get("digest")?.asText()
             logger.debug { "Extracted Docker Hub digest: $digest" }
             return digest
         }
+    }
+
+    private fun findPlatformDigest(
+        imagesNode: JsonNode?,
+        platform: ImagePlatform,
+    ): String? {
+        if (imagesNode == null || !imagesNode.isArray) return null
+
+        return imagesNode
+            .firstOrNull { image ->
+                val platformNode = image.get("platform") ?: image
+                val os = platformNode.get("os")?.asText()
+                val architecture = platformNode.get("architecture")?.asText()
+                val variant = platformNode.get("variant")?.asText()
+
+                os == platform.os &&
+                    architecture == platform.architecture &&
+                    (platform.variant == null || variant == platform.variant)
+            }?.get("digest")
+            ?.asText()
     }
 
     private suspend fun getGitHubContainerRegistryDigest(
@@ -260,12 +297,68 @@ class DockerRegistryClient {
         return ghcrStrategy.getImageDigest(repository, tag, dockerAuth)
     }
 
+    private suspend fun getDockerHubPlatformDigestForReference(
+        namespace: String,
+        reference: String,
+        dockerAuth: DockerAuth?,
+        platform: ImagePlatform,
+    ): String? {
+        val token = getDockerHubToken(namespace, dockerAuth) ?: return null
+        return getRegistryPlatformDigest(
+            registry = "registry-1.docker.io",
+            repository = namespace,
+            reference = reference,
+            authorizationHeader = "Bearer $token",
+            platform = platform,
+        )
+    }
+
+    private suspend fun getDockerHubToken(
+        namespace: String,
+        dockerAuth: DockerAuth?,
+    ): String? {
+        val url =
+            "https://auth.docker.io/token"
+                .toHttpUrl()
+                .newBuilder()
+                .addQueryParameter("service", "registry.docker.io")
+                .addQueryParameter("scope", "repository:$namespace:pull")
+                .build()
+
+        val requestBuilder = Request.Builder().url(url).get()
+        if (dockerAuth != null) {
+            requestBuilder.header("Authorization", Credentials.basic(dockerAuth.username, dockerAuth.password))
+        }
+
+        client.newCall(requestBuilder.build()).await().use { response ->
+            if (!response.isSuccessful) {
+                logger.warn { "Failed to fetch Docker Hub auth token: ${response.code}" }
+                return null
+            }
+
+            val body = response.body?.string() ?: return null
+            val json = mapper.readTree(body)
+            return json.get("token")?.asText() ?: json.get("access_token")?.asText()
+        }
+    }
+
     private suspend fun getGenericRegistryDigest(
         registry: String,
         repository: String,
         tag: String,
         dockerAuth: DockerAuth?,
+        platform: ImagePlatform?,
     ): String? {
+        if (platform != null) {
+            return getRegistryPlatformDigest(
+                registry = registry,
+                repository = repository,
+                reference = tag,
+                authorizationHeader = dockerAuth?.let { Credentials.basic(it.username, it.password) },
+                platform = platform,
+            )
+        }
+
         val url = "https://$registry/v2/$repository/manifests/$tag"
         logger.debug { "Fetching generic registry digest from: $url" }
 
@@ -295,4 +388,57 @@ class DockerRegistryClient {
             return digest
         }
     }
+
+    private suspend fun getRegistryPlatformDigest(
+        registry: String,
+        repository: String,
+        reference: String,
+        authorizationHeader: String?,
+        platform: ImagePlatform,
+    ): String? {
+        val url = "https://$registry/v2/$repository/manifests/$reference"
+        logger.debug { "Fetching registry platform digest from: $url for platform=$platform" }
+
+        val requestBuilder =
+            Request
+                .Builder()
+                .url(url)
+                .get()
+                .addHeader(
+                    "Accept",
+                    listOf(
+                        "application/vnd.oci.image.index.v1+json",
+                        "application/vnd.docker.distribution.manifest.list.v2+json",
+                        "application/vnd.oci.image.manifest.v1+json",
+                        "application/vnd.docker.distribution.manifest.v2+json",
+                    ).joinToString(", "),
+                )
+
+        if (authorizationHeader != null) {
+            requestBuilder.header("Authorization", authorizationHeader)
+        }
+
+        client.newCall(requestBuilder.build()).await().use { response ->
+            logger.debug { "Registry platform digest response code: ${response.code}" }
+            if (!response.isSuccessful) {
+                logger.warn { "Failed to fetch manifest from $registry: ${response.code}" }
+                return null
+            }
+
+            val digest = response.header("Docker-Content-Digest")
+            val body = response.body?.string()
+            if (!body.isNullOrBlank()) {
+                val manifest = mapper.readTree(body)
+                findPlatformDigest(manifest.get("manifests"), platform)?.let { platformDigest ->
+                    logger.debug { "Registry platform digest from manifest list: $platformDigest" }
+                    return platformDigest
+                }
+            }
+
+            logger.debug { "Registry digest from header: $digest" }
+            return digest
+        }
+    }
+
+    private fun isDigestReference(reference: String): Boolean = reference.startsWith("sha256:")
 }

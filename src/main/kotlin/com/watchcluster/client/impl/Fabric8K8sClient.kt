@@ -14,6 +14,7 @@ import com.watchcluster.client.domain.PodCondition
 import com.watchcluster.client.domain.PodInfo
 import com.watchcluster.client.domain.PodStatus
 import com.watchcluster.client.domain.SecretInfo
+import com.watchcluster.model.ImagePlatform
 import io.fabric8.kubernetes.api.model.Pod
 import io.fabric8.kubernetes.api.model.Secret
 import io.fabric8.kubernetes.api.model.apps.Deployment
@@ -184,6 +185,27 @@ class Fabric8K8sClient(
             }
         }
 
+    override suspend fun getNodePlatform(nodeName: String): ImagePlatform? =
+        withContext(Dispatchers.IO) {
+            try {
+                val node = kubernetesClient.nodes().withName(nodeName).get() ?: return@withContext null
+                val labels = node.metadata?.labels ?: emptyMap()
+                val nodeInfo = node.status?.nodeInfo
+
+                val os = labels["kubernetes.io/os"] ?: nodeInfo?.operatingSystem
+                val architecture = labels["kubernetes.io/arch"] ?: nodeInfo?.architecture
+
+                if (os != null && architecture != null) {
+                    ImagePlatform(os = os, architecture = architecture)
+                } else {
+                    null
+                }
+            } catch (e: Exception) {
+                logger.error(e) { "Failed to get node platform for $nodeName" }
+                null
+            }
+        }
+
     override suspend fun getConfiguration(): K8sClientConfig =
         withContext(Dispatchers.IO) {
             K8sClientConfig(
@@ -258,6 +280,7 @@ class Fabric8K8sClient(
                     )
                 } ?: emptyList(),
             status = mapToPodStatus(status),
+            nodeName = spec?.nodeName,
         )
     }
 

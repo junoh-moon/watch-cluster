@@ -3,6 +3,7 @@ package com.watchcluster.service
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.watchcluster.client.K8sClient
 import com.watchcluster.model.DockerAuth
+import com.watchcluster.model.ImagePlatform
 import com.watchcluster.model.ImageUpdateResult
 import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.util.ImageParser
@@ -17,6 +18,11 @@ class ImageChecker(
 ) {
     private val registryClient = DockerRegistryClient()
     private val objectMapper = ObjectMapper()
+
+    private data class CurrentImageDigest(
+        val digest: String?,
+        val platform: ImagePlatform?,
+    )
 
     suspend fun checkForUpdate(
         currentImage: String,
@@ -274,8 +280,17 @@ class ImageChecker(
         }
 
         return runCatching {
-            val registryDigest = getImageDigest(registry, repository, tag, dockerAuth)
-            val currentDigest = getDeploymentSpecDigest(currentImage, dockerAuth, namespace, deploymentName)
+            val currentImageDigest =
+                getCurrentImageDigest(
+                    image = currentImage,
+                    registry = registry,
+                    repository = repository,
+                    dockerAuth = dockerAuth,
+                    namespace = namespace,
+                    deploymentName = deploymentName,
+                )
+            val registryDigest = getImageDigest(registry, repository, tag, dockerAuth, currentImageDigest.platform)
+            val currentDigest = currentImageDigest.digest
 
             if (registryDigest != null && currentDigest != null && registryDigest != currentDigest) {
                 createImageUpdateResult(
@@ -321,7 +336,98 @@ class ImageChecker(
         repository: String,
         tag: String,
         dockerAuth: DockerAuth?,
-    ): String? = registryClient.getImageDigest(registry, repository, tag, dockerAuth)
+        platform: ImagePlatform? = null,
+    ): String? = registryClient.getImageDigest(registry, repository, tag, dockerAuth, platform)
+
+    private suspend fun getCurrentImageDigest(
+        image: String,
+        registry: String?,
+        repository: String,
+        dockerAuth: DockerAuth?,
+        namespace: String? = null,
+        deploymentName: String? = null,
+    ): CurrentImageDigest {
+        return runCatching {
+            if (namespace != null && deploymentName != null) {
+                val deployment = k8sClient.getDeployment(namespace, deploymentName)
+
+                if (deployment != null) {
+                    val targetContainerName = deployment.containers.firstOrNull()?.name
+                    val pods = k8sClient.listPodsByLabels(namespace, deployment.selector)
+
+                    pods.forEach { pod ->
+                        val containerStatus =
+                            pod.status.containerStatuses
+                                .find { it.name == targetContainerName }
+                        val imageID = containerStatus?.imageID
+                        val digest = extractDigest(imageID)
+                        if (digest != null) {
+                            val platform = pod.nodeName?.let { k8sClient.getNodePlatform(it) }
+                            return CurrentImageDigest(
+                                digest = resolvePlatformDigest(registry, repository, digest, dockerAuth, platform),
+                                platform = platform,
+                            )
+                        }
+                    }
+
+                    val containerImage = deployment.containers.firstOrNull()?.image
+                    val digest = extractDigest(containerImage)
+                    if (digest != null) {
+                        var platform: ImagePlatform? = null
+                        for (pod in pods) {
+                            val nodeName = pod.nodeName ?: continue
+                            platform = k8sClient.getNodePlatform(nodeName)
+                            if (platform != null) break
+                        }
+
+                        logger.debug { "Got digest from deployment spec image: $digest" }
+                        return CurrentImageDigest(
+                            digest = resolvePlatformDigest(registry, repository, digest, dockerAuth, platform),
+                            platform = platform,
+                        )
+                    }
+
+                    logger.debug { "No digest in deployment spec image: $containerImage" }
+                    logger.debug { "No digest found in pod imageIDs" }
+                }
+            }
+
+            val digest = extractDigest(image)
+            if (digest != null) {
+                logger.debug { "Got digest from image parameter: $digest" }
+                return CurrentImageDigest(digest = digest, platform = null)
+            }
+
+            logger.debug { "No digest found for image: $image" }
+            CurrentImageDigest(digest = null, platform = null)
+        }.getOrElse { e ->
+            logger.error(e) { "Error getting current digest for $image" }
+            CurrentImageDigest(digest = null, platform = null)
+        }
+    }
+
+    private suspend fun resolvePlatformDigest(
+        registry: String?,
+        repository: String,
+        digest: String,
+        dockerAuth: DockerAuth?,
+        platform: ImagePlatform?,
+    ): String {
+        if (platform == null) return digest
+
+        return runCatching {
+            registryClient.getImageDigest(registry, repository, digest, dockerAuth, platform) ?: digest
+        }.getOrElse { e ->
+            logger.debug { "Could not resolve platform digest for $digest on $platform: ${e.message}" }
+            digest
+        }
+    }
+
+    private fun extractDigest(imageRef: String?): String? =
+        imageRef
+            ?.takeIf { it.contains("@") }
+            ?.substringAfter("@")
+            ?.takeIf { it.isNotBlank() }
 
     private suspend fun getDeploymentSpecDigest(
         image: String,

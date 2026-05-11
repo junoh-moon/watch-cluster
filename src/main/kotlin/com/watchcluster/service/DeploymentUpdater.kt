@@ -6,6 +6,7 @@ import com.watchcluster.model.DeploymentEventData
 import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.model.WebhookEvent
 import com.watchcluster.model.WebhookEventType
+import com.watchcluster.util.ImageParser
 import mu.KotlinLogging
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -15,6 +16,9 @@ private val logger = KotlinLogging.logger {}
 class DeploymentUpdater(
     private val k8sClient: K8sClient,
     private val webhookService: WebhookService,
+    private val registryClient: DockerRegistryClient = DockerRegistryClient(),
+    private val rolloutTimeoutMs: Long = 300000L,
+    private val rolloutPollIntervalMs: Long = 5000L,
 ) {
     suspend fun updateDeployment(
         namespace: String,
@@ -156,10 +160,9 @@ class DeploymentUpdater(
     ) {
         runCatching {
             logger.info { "Waiting for rollout to complete..." }
-            val timeout = 300000L
             val startTime = System.currentTimeMillis()
 
-            while (System.currentTimeMillis() - startTime < timeout) {
+            while (System.currentTimeMillis() - startTime < rolloutTimeoutMs) {
                 val deployment = k8sClient.getDeployment(namespace, name) ?: return
                 val status = deployment.status
 
@@ -169,7 +172,7 @@ class DeploymentUpdater(
                     logger.debug {
                         "Waiting for controller to observe generation ${deployment.generation} (current: ${status.observedGeneration})"
                     }
-                    kotlinx.coroutines.delay(2000)
+                    kotlinx.coroutines.delay(rolloutPollIntervalMs)
                     continue
                 }
 
@@ -230,10 +233,10 @@ class DeploymentUpdater(
                     ).joinToString(", ")
                 }
 
-                kotlinx.coroutines.delay(5000)
+                kotlinx.coroutines.delay(rolloutPollIntervalMs)
             }
 
-            logger.warn { "Rollout timeout after ${timeout / 1000} seconds" }
+            logger.warn { "Rollout timeout after ${rolloutTimeoutMs / 1000} seconds" }
         }.onFailure { e ->
             logger.warn(e) { "Error waiting for rollout" }
         }
@@ -270,7 +273,11 @@ class DeploymentUpdater(
                                 pod.status.containerStatuses
                                     .find { it.name == targetContainerName }
                             val imageID = containerStatus?.imageID
-                            val podDigest = imageID?.substringAfter("@", "")
+                            val rawPodDigest = extractDigest(imageID)
+                            val podDigest =
+                                rawPodDigest?.let {
+                                    resolvePlatformDigest(expectedImage, it, pod)
+                                }
 
                             val matches = podDigest == expectedDigest
                             if (!matches) {
@@ -297,6 +304,28 @@ class DeploymentUpdater(
             false
         }
     }
+
+    private suspend fun resolvePlatformDigest(
+        image: String,
+        digest: String,
+        pod: com.watchcluster.client.domain.PodInfo,
+    ): String {
+        val platform = pod.nodeName?.let { k8sClient.getNodePlatform(it) } ?: return digest
+        val components = ImageParser.parseImageString(image)
+
+        return runCatching {
+            registryClient.getImageDigest(components.registry, components.repository, digest, null, platform) ?: digest
+        }.getOrElse { e ->
+            logger.debug { "Could not resolve pod digest $digest for platform $platform: ${e.message}" }
+            digest
+        }
+    }
+
+    private fun extractDigest(imageRef: String?): String? =
+        imageRef
+            ?.takeIf { it.contains("@") }
+            ?.substringAfter("@")
+            ?.takeIf { it.isNotBlank() }
 
     companion object {
         private val objectMapper = ObjectMapper()
