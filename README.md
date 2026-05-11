@@ -116,6 +116,17 @@ spec:
 | `watch-cluster.io/enabled` | Enable monitoring | Yes | - |
 | `watch-cluster.io/cron` | Update check interval (Quartz cron) | No | `0 */5 * * * ?` |
 | `watch-cluster.io/strategy` | Update strategy (`version`, `version-lock-major`, `latest`) | No | `version` |
+| `watch-cluster.io/check-now` | Trigger one immediate update check, then remove this annotation | No | - |
+
+### Manual Check Trigger
+
+To run the same check that would normally happen on the next cron execution, add the `watch-cluster.io/check-now` annotation to a monitored Deployment:
+
+```bash
+kubectl annotate deployment my-app watch-cluster.io/check-now=true
+```
+
+watch-cluster removes the annotation after it observes the request, runs one check using the Deployment's existing strategy, and records Kubernetes Events for the request and result.
 
 ### Update Strategies
 

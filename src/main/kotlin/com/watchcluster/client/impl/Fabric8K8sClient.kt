@@ -15,6 +15,7 @@ import com.watchcluster.client.domain.PodInfo
 import com.watchcluster.client.domain.PodStatus
 import com.watchcluster.client.domain.SecretInfo
 import com.watchcluster.model.ImagePlatform
+import io.fabric8.kubernetes.api.model.EventBuilder
 import io.fabric8.kubernetes.api.model.Pod
 import io.fabric8.kubernetes.api.model.Secret
 import io.fabric8.kubernetes.api.model.apps.Deployment
@@ -28,6 +29,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import mu.KotlinLogging
 import java.util.Base64
+import java.util.UUID
 
 private val logger = KotlinLogging.logger {}
 
@@ -123,6 +125,59 @@ class Fabric8K8sClient(
                 .inAnyNamespace()
                 .watch(fabric8Watcher)
         }
+
+    override suspend fun recordDeploymentEvent(
+        namespace: String,
+        deploymentName: String,
+        reason: String,
+        message: String,
+        type: String,
+    ) {
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val now =
+                    java.time.OffsetDateTime
+                        .now(java.time.ZoneOffset.UTC)
+                        .toString()
+                val suffix = "${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}"
+                val eventNamePrefix = deploymentName.take(253 - suffix.length - 1).trimEnd('.')
+                val eventName = "$eventNamePrefix.$suffix"
+                val event =
+                    EventBuilder()
+                        .withApiVersion("v1")
+                        .withKind("Event")
+                        .withNewMetadata()
+                        .withName(eventName)
+                        .withNamespace(namespace)
+                        .endMetadata()
+                        .withNewInvolvedObject()
+                        .withApiVersion("apps/v1")
+                        .withKind("Deployment")
+                        .withName(deploymentName)
+                        .withNamespace(namespace)
+                        .endInvolvedObject()
+                        .withType(type)
+                        .withReason(reason)
+                        .withMessage(message)
+                        .withFirstTimestamp(now)
+                        .withLastTimestamp(now)
+                        .withCount(1)
+                        .withNewSource("watch-cluster", null)
+                        .withReportingComponent("watch-cluster")
+                        .withReportingInstance("watch-cluster")
+                        .build()
+
+                kubernetesClient
+                    .v1()
+                    .events()
+                    .inNamespace(namespace)
+                    .resource(event)
+                    .create()
+            }.onFailure { e ->
+                logger.warn(e) { "Failed to record event for deployment $namespace/$deploymentName: $reason" }
+            }
+        }
+    }
 
     override suspend fun getPod(
         namespace: String,

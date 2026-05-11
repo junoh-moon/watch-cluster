@@ -116,6 +116,17 @@ spec:
 | `watch-cluster.io/enabled` | 모니터링 활성화 여부 | 예 | - |
 | `watch-cluster.io/cron` | 업데이트 확인 주기 (Quartz cron) | 아니오 | `0 */5 * * * ?` |
 | `watch-cluster.io/strategy` | 업데이트 전략 (`version`, `version-lock-major`, `latest`) | 아니오 | `version` |
+| `watch-cluster.io/check-now` | 즉시 업데이트 확인을 한 번 실행한 뒤 이 annotation 제거 | 아니오 | - |
+
+### 수동 확인 트리거
+
+다음 cron 실행을 기다리지 않고 동일한 확인을 한 번 실행하려면 모니터링 중인 Deployment에 `watch-cluster.io/check-now` annotation을 추가합니다:
+
+```bash
+kubectl annotate deployment my-app watch-cluster.io/check-now=true
+```
+
+watch-cluster는 요청을 감지하면 annotation을 제거하고, Deployment의 기존 전략으로 한 번 확인한 뒤 요청과 결과를 Kubernetes Event로 기록합니다.
 
 ### 업데이트 전략
 

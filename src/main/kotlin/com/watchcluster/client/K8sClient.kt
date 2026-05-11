@@ -21,6 +21,15 @@ interface K8sClient {
 
     suspend fun watchDeployments(watcher: K8sWatcher<DeploymentInfo>): Unit
 
+    suspend fun recordDeploymentEvent(
+        namespace: String,
+        deploymentName: String,
+        reason: String,
+        message: String,
+        type: String = "Normal",
+    ) {
+    }
+
     // Pod operations
     suspend fun getPod(
         namespace: String,

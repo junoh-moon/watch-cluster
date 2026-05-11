@@ -18,6 +18,8 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.slot
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -276,6 +278,105 @@ class WatchControllerTest {
             watcher.eventReceived(K8sWatchEvent(EventType.ERROR, deployment))
 
             assertNotNull(watcher)
+        }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `check-now annotation is consumed and triggers immediate check with audit events`() =
+        runTest {
+            val mockImageChecker = mockk<com.watchcluster.service.ImageChecker>()
+            val mockDeploymentUpdater = mockk<com.watchcluster.service.DeploymentUpdater>(relaxed = true)
+            val mockCronScheduler = mockk<com.watchcluster.util.CronScheduler>(relaxed = true)
+
+            val deployment =
+                createMockDeployment(
+                    namespace = "test-ns",
+                    name = "test-app",
+                    image = "nginx:1.20.0",
+                    annotations =
+                        mapOf(
+                            WatchClusterAnnotations.ENABLED to "true",
+                            WatchClusterAnnotations.CRON to "0 */10 * * * ?",
+                            WatchClusterAnnotations.STRATEGY to "version",
+                            WatchClusterAnnotations.CHECK_NOW to "true",
+                        ),
+                )
+
+            val watcherSlot = slot<K8sWatcher<DeploymentInfo>>()
+            coEvery { mockK8sClient.watchDeployments(capture(watcherSlot)) } returns mockk(relaxed = true)
+            coEvery {
+                mockK8sClient.patchDeployment(
+                    "test-ns",
+                    "test-app",
+                    match { it.contains("\"${WatchClusterAnnotations.CHECK_NOW}\":null") },
+                )
+            } returns deployment.copy(annotations = deployment.annotations - WatchClusterAnnotations.CHECK_NOW)
+            coEvery { mockK8sClient.recordDeploymentEvent(any(), any(), any(), any(), any()) } returns Unit
+            coEvery {
+                mockImageChecker.checkForUpdate(
+                    "nginx:1.20.0",
+                    any(),
+                    "test-ns",
+                    emptyList(),
+                    "test-app",
+                )
+            } returns
+                ImageUpdateResult(
+                    currentImage = "nginx:1.20.0",
+                    newImage = null,
+                    reason = "No newer version available",
+                )
+
+            val controller =
+                WatchController(
+                    mockK8sClient,
+                    coroutineScope = this,
+                    imageChecker = mockImageChecker,
+                    deploymentUpdater = mockDeploymentUpdater,
+                    cronScheduler = mockCronScheduler,
+                )
+
+            controller.start()
+            watcherSlot.captured.eventReceived(K8sWatchEvent(EventType.MODIFIED, deployment))
+            advanceUntilIdle()
+
+            coVerify(exactly = 1) {
+                mockK8sClient.patchDeployment(
+                    "test-ns",
+                    "test-app",
+                    match { it.contains("\"${WatchClusterAnnotations.CHECK_NOW}\":null") },
+                )
+            }
+            coVerify(exactly = 1) {
+                mockImageChecker.checkForUpdate(
+                    "nginx:1.20.0",
+                    any(),
+                    "test-ns",
+                    emptyList(),
+                    "test-app",
+                )
+            }
+            coVerify {
+                mockK8sClient.recordDeploymentEvent(
+                    "test-ns",
+                    "test-app",
+                    "ManualCheckRequested",
+                    match { it.contains("test-ns/test-app") },
+                    "Normal",
+                )
+            }
+            coVerify {
+                mockK8sClient.recordDeploymentEvent(
+                    "test-ns",
+                    "test-app",
+                    "ManualCheckNoUpdate",
+                    match { it.contains("No newer version available") },
+                    "Normal",
+                )
+            }
+            coVerify(exactly = 0) {
+                mockDeploymentUpdater.updateDeployment(any(), any(), any(), any(), any(), any())
+            }
         }
 
     @Test
