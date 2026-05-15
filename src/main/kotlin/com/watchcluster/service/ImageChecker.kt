@@ -182,7 +182,7 @@ class ImageChecker(
         val newTag = normalizeVersionTag(versionComparison.originalTag, imageComponents.hasVPrefix)
         val newImage = ImageParser.buildImageString(imageComponents.registry, imageComponents.repository, newTag)
 
-        val currentDigest = safeGetCurrentDigest(currentImage, dockerAuth)
+        val currentDigest = safeGetCurrentDigest(currentImage)
         val newDigest = safeGetImageDigest(imageComponents.registry, imageComponents.repository, newTag, dockerAuth)
 
         return createImageUpdateResult(
@@ -237,16 +237,7 @@ class ImageChecker(
             newDigest = newDigest,
         )
 
-    private suspend fun safeGetCurrentDigest(
-        currentImage: String,
-        dockerAuth: DockerAuth?,
-    ): String? =
-        runCatching {
-            getDeploymentSpecDigest(currentImage, dockerAuth)
-        }.getOrElse { e ->
-            logger.debug { "Could not get current digest: ${e.message}" }
-            null
-        }
+    private fun safeGetCurrentDigest(currentImage: String): String? = ImageParser.extractDigest(currentImage)
 
     private suspend fun safeGetImageDigest(
         registry: String?,
@@ -270,7 +261,6 @@ class ImageChecker(
         val components = ImageParser.parseImageString(currentImage)
         val (registry, repository, tag) = components
 
-        // Check if this is a version tag - those should use version strategy
         if (ImageParser.isVersionTag(tag)) {
             return createImageUpdateResult(
                 currentImage = currentImage,
@@ -359,8 +349,7 @@ class ImageChecker(
                         val containerStatus =
                             pod.status.containerStatuses
                                 .find { it.name == targetContainerName }
-                        val imageID = containerStatus?.imageID
-                        val digest = extractDigest(imageID)
+                        val digest = ImageParser.extractDigest(containerStatus?.imageID)
                         if (digest != null) {
                             val platform = pod.nodeName?.let { k8sClient.getNodePlatform(it) }
                             return CurrentImageDigest(
@@ -371,7 +360,7 @@ class ImageChecker(
                     }
 
                     val containerImage = deployment.containers.firstOrNull()?.image
-                    val digest = extractDigest(containerImage)
+                    val digest = ImageParser.extractDigest(containerImage)
                     if (digest != null) {
                         var platform: ImagePlatform? = null
                         for (pod in pods) {
@@ -392,7 +381,7 @@ class ImageChecker(
                 }
             }
 
-            val digest = extractDigest(image)
+            val digest = ImageParser.extractDigest(image)
             if (digest != null) {
                 logger.debug { "Got digest from image parameter: $digest" }
                 return CurrentImageDigest(digest = digest, platform = null)
@@ -420,67 +409,6 @@ class ImageChecker(
         }.getOrElse { e ->
             logger.debug { "Could not resolve platform digest for $digest on $platform: ${e.message}" }
             digest
-        }
-    }
-
-    private fun extractDigest(imageRef: String?): String? =
-        imageRef
-            ?.takeIf { it.contains("@") }
-            ?.substringAfter("@")
-            ?.takeIf { it.isNotBlank() }
-
-    private suspend fun getDeploymentSpecDigest(
-        image: String,
-        @Suppress("UNUSED_PARAMETER") dockerAuth: DockerAuth? = null,
-        namespace: String? = null,
-        deploymentName: String? = null,
-    ): String? {
-        return runCatching {
-            // If we have deployment info, get the digest from deployment spec
-            if (namespace != null && deploymentName != null) {
-                // Get the deployment spec image - this is what we should compare against registry
-                val deployment = k8sClient.getDeployment(namespace, deploymentName)
-
-                if (deployment != null) {
-                    val containerImage = deployment.containers.firstOrNull()?.image
-                    if (containerImage != null && containerImage.contains("@")) {
-                        // Extract digest from deployment spec image (format: image:tag@sha256:...)
-                        val digest = containerImage.substringAfter("@")
-                        logger.debug { "Got digest from deployment spec: $digest" }
-                        return digest
-                    }
-                    logger.debug { "No digest in deployment spec image: $containerImage" }
-
-                    // Fallback: try to get digest from running pod's imageID
-                    val pods = k8sClient.listPodsByLabels(namespace, deployment.selector)
-                    val targetContainerName = deployment.containers.firstOrNull()?.name
-                    for (pod in pods) {
-                        val containerStatus =
-                            pod.status.containerStatuses.find { it.name == targetContainerName }
-                        val imageID = containerStatus?.imageID
-                        if (imageID != null && imageID.contains("@")) {
-                            val digest = imageID.substringAfter("@")
-                            logger.debug { "Got digest from pod imageID: $digest" }
-                            return digest
-                        }
-                    }
-                    logger.debug { "No digest found in pod imageIDs" }
-                }
-            }
-
-            // Fallback: try to extract digest from the image parameter itself
-            if (image.contains("@")) {
-                val digest = image.substringAfter("@")
-                logger.debug { "Got digest from image parameter: $digest" }
-                return digest
-            }
-
-            // If no digest found, return null to indicate no digest specified
-            logger.debug { "No digest found for image: $image" }
-            null
-        }.getOrElse { e ->
-            logger.error(e) { "Error getting deployment spec digest for $image" }
-            null
         }
     }
 }

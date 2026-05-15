@@ -154,8 +154,6 @@ class WatchController(
         }
     }
 
-    // parseStrategy method removed - using UpdateStrategy.fromString() directly
-
     private fun triggerManualCheck(
         key: String,
         namespace: String,

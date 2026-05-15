@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.watchcluster.client.K8sClient
 import com.watchcluster.model.DeploymentEventData
 import com.watchcluster.model.UpdateStrategy
+import com.watchcluster.model.WatchClusterAnnotations
 import com.watchcluster.model.WebhookEvent
 import com.watchcluster.model.WebhookEventType
 import com.watchcluster.util.ImageParser
@@ -41,8 +42,7 @@ class DeploymentUpdater(
 
             val actualCurrentImage = containers[0].image
 
-            // Idempotence check: skip if already at target image
-            // For Latest strategy, we always proceed since we rely on annotation changes to trigger rollout
+            // Latest strategy must always re-patch — rollout is triggered by annotation change, not image-string change.
             if (strategy !is UpdateStrategy.Latest && actualCurrentImage == newImageRef) {
                 logger.info { "Deployment $namespace/$name already at $newImageRef, skipping update" }
                 return
@@ -65,13 +65,13 @@ class DeploymentUpdater(
             // Get the first container's name (or find the appropriate container)
             val containerName = containers[0].name
 
-            // Prepare annotations for combined update
             val timestamp = ZonedDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
-            val annotationMap = mutableMapOf<String, String>()
-            annotationMap["watch-cluster.io/last-update"] = timestamp
-            annotationMap["watch-cluster.io/change"] = "$previousImage -> $newImageRef"
+            val annotationMap =
+                mapOf(
+                    WatchClusterAnnotations.LAST_UPDATE to timestamp,
+                    WatchClusterAnnotations.CHANGE to "$previousImage -> $newImageRef",
+                )
 
-            // Create combined patch JSON for both image and annotations
             val patchJson = buildCombinedPatch(containerName to newImageRef, annotationMap, strategy)
 
             k8sClient.patchDeployment(namespace, name, patchJson)?.let {
@@ -115,15 +115,13 @@ class DeploymentUpdater(
                 "image" to imageToSet,
             )
 
-        // For Latest strategy, set imagePullPolicy to Always to ensure fresh image pull
         if (strategy is UpdateStrategy.Latest) {
             containerPatch["imagePullPolicy"] = "Always"
         }
 
-        // Pod template annotations - these trigger rollout when changed
         val podTemplateAnnotations =
             mapOf(
-                "watch-cluster.io/last-update" to (annotations["watch-cluster.io/last-update"] ?: ""),
+                WatchClusterAnnotations.LAST_UPDATE to (annotations[WatchClusterAnnotations.LAST_UPDATE] ?: ""),
             )
 
         val patchData =
@@ -273,7 +271,7 @@ class DeploymentUpdater(
                                 pod.status.containerStatuses
                                     .find { it.name == targetContainerName }
                             val imageID = containerStatus?.imageID
-                            val rawPodDigest = extractDigest(imageID)
+                            val rawPodDigest = ImageParser.extractDigest(imageID)
                             val podDigest =
                                 rawPodDigest?.let {
                                     resolvePlatformDigest(expectedImage, it, pod)
@@ -320,12 +318,6 @@ class DeploymentUpdater(
             digest
         }
     }
-
-    private fun extractDigest(imageRef: String?): String? =
-        imageRef
-            ?.takeIf { it.contains("@") }
-            ?.substringAfter("@")
-            ?.takeIf { it.isNotBlank() }
 
     companion object {
         private val objectMapper = ObjectMapper()

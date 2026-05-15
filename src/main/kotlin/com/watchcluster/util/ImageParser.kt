@@ -8,57 +8,54 @@ data class ImageComponents(
 
 object ImageParser {
     fun parseImageString(image: String): ImageComponents {
-        // Remove digest if present
         val imageWithoutDigest = image.substringBefore("@")
 
-        // Find the last occurrence of "/" to separate registry/repo from image:tag
         val lastSlash = imageWithoutDigest.lastIndexOf("/")
-        val (registryAndRepo, imageAndTag) = if (lastSlash == -1) {
-            "" to imageWithoutDigest
-        } else {
-            imageWithoutDigest.take(lastSlash) to imageWithoutDigest.substring(lastSlash + 1)
-        }
+        val (registryAndRepo, imageAndTag) =
+            if (lastSlash == -1) {
+                "" to imageWithoutDigest
+            } else {
+                imageWithoutDigest.take(lastSlash) to imageWithoutDigest.substring(lastSlash + 1)
+            }
 
-        // Extract tag from image:tag part
         val colonIndex = imageAndTag.indexOf(":")
-        val (imageName, tag) = if (colonIndex == -1) {
-            imageAndTag to "latest"
-        } else {
-            imageAndTag.substring(0, colonIndex) to imageAndTag.substring(colonIndex + 1)
-        }
+        val (imageName, tag) =
+            if (colonIndex == -1) {
+                imageAndTag to "latest"
+            } else {
+                imageAndTag.substring(0, colonIndex) to imageAndTag.substring(colonIndex + 1)
+            }
 
-        // Determine registry and repository
-        val (registry, repository) = when {
-            registryAndRepo.isEmpty() -> null to imageName
-            else -> {
-                val firstSlash = registryAndRepo.indexOf("/")
-                if (firstSlash == -1) {
-                    // Only one part before image name, check if it's a registry
-                    val possibleRegistry = registryAndRepo
-                    when {
-                        possibleRegistry.contains(".") ||
-                            possibleRegistry.contains(":") ||
-                            possibleRegistry == "localhost" -> {
-                            possibleRegistry to imageName
+        val (registry, repository) =
+            when {
+                registryAndRepo.isEmpty() -> null to imageName
+                else -> {
+                    val firstSlash = registryAndRepo.indexOf("/")
+                    if (firstSlash == -1) {
+                        val possibleRegistry = registryAndRepo
+                        when {
+                            possibleRegistry.contains(".") ||
+                                possibleRegistry.contains(":") ||
+                                possibleRegistry == "localhost" -> {
+                                possibleRegistry to imageName
+                            }
+
+                            else -> null to "$registryAndRepo/$imageName"
                         }
+                    } else {
+                        val possibleRegistry = registryAndRepo.substring(0, firstSlash)
+                        when {
+                            possibleRegistry.contains(".") ||
+                                possibleRegistry.contains(":") ||
+                                possibleRegistry == "localhost" -> {
+                                possibleRegistry to "${registryAndRepo.substring(firstSlash + 1)}/$imageName"
+                            }
 
-                        else -> null to "$registryAndRepo/$imageName"
-                    }
-                } else {
-                    // Multiple parts, first part is registry if it contains special chars
-                    val possibleRegistry = registryAndRepo.substring(0, firstSlash)
-                    when {
-                        possibleRegistry.contains(".") ||
-                            possibleRegistry.contains(":") ||
-                            possibleRegistry == "localhost" -> {
-                            possibleRegistry to "${registryAndRepo.substring(firstSlash + 1)}/$imageName"
+                            else -> null to "$registryAndRepo/$imageName"
                         }
-
-                        else -> null to "$registryAndRepo/$imageName"
                     }
                 }
             }
-        }
 
         return ImageComponents(registry, repository, tag)
     }
@@ -78,7 +75,6 @@ object ImageParser {
         return versionPart.split(".").map { it.toIntOrNull() ?: 0 }
     }
 
-
     fun removeDigest(image: String): String = image.substringBefore("@")
 
     fun addDigest(
@@ -88,6 +84,12 @@ object ImageParser {
         val imageWithoutDigest = removeDigest(image)
         return "$imageWithoutDigest@$digest"
     }
+
+    fun extractDigest(imageRef: String?): String? =
+        imageRef
+            ?.takeIf { it.contains("@") }
+            ?.substringAfter("@")
+            ?.takeIf { it.isNotBlank() }
 }
 
 infix operator fun List<Int>.compareTo(other: List<Int>): Int =

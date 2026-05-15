@@ -117,8 +117,6 @@ enum class WebhookEventType {
     IMAGE_ROLLOUT_FAILED,
 }
 
-// UpdateStrategyType enum removed - use UpdateStrategy sealed class directly
-
 object WatchClusterAnnotations {
     const val ENABLED = "watch-cluster.io/enabled"
     const val CRON = "watch-cluster.io/cron"
@@ -126,4 +124,6 @@ object WatchClusterAnnotations {
     const val CHECK_NOW = "watch-cluster.io/check-now"
     const val VERSION_PATTERN = "watch-cluster.io/version-pattern"
     const val LOCK_MAJOR_VERSION = "watch-cluster.io/lock-major-version"
+    const val LAST_UPDATE = "watch-cluster.io/last-update"
+    const val CHANGE = "watch-cluster.io/change"
 }

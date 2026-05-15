@@ -14,10 +14,3 @@ interface RegistryStrategy {
         dockerAuth: DockerAuth? = null,
     ): String?
 }
-
-abstract class BaseRegistryStrategy : RegistryStrategy {
-    protected fun buildRepositoryPath(repository: String): String = repository
-
-    protected fun formatAuthHeader(dockerAuth: DockerAuth?): String? =
-        dockerAuth?.let { "Basic ${java.util.Base64.getEncoder().encodeToString("${it.username}:${it.password}".toByteArray())}" }
-}

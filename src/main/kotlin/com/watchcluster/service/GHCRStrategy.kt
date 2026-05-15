@@ -5,19 +5,10 @@ import com.watchcluster.model.DockerAuth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import mu.KotlinLogging
-import okhttp3.OkHttpClient
-import java.util.concurrent.TimeUnit
 
 private val logger = KotlinLogging.logger {}
 
-class GHCRStrategy : BaseRegistryStrategy() {
-    private val client =
-        OkHttpClient
-            .Builder()
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .build()
-
+class GHCRStrategy : RegistryStrategy {
     private val mapper = jacksonObjectMapper()
 
     override suspend fun getTags(
