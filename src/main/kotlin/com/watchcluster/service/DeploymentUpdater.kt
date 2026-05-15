@@ -2,7 +2,12 @@ package com.watchcluster.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.watchcluster.client.K8sClient
+import com.watchcluster.client.domain.DeploymentConditionReason
+import com.watchcluster.client.domain.DeploymentConditionType
+import com.watchcluster.client.domain.K8sConditionStatus
+import com.watchcluster.client.domain.PodConditionType
 import com.watchcluster.model.DeploymentEventData
+import com.watchcluster.model.ImagePlatform
 import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.model.WatchClusterAnnotations
 import com.watchcluster.model.WebhookEvent
@@ -82,7 +87,7 @@ class DeploymentUpdater(
                     throw IllegalStateException("Patch operation returned null deployment")
                 }
 
-            waitForRollout(namespace, name, newImageRef, strategy, expectedDigest)
+            waitForRollout(namespace, name, newImageRef, strategy, expectedDigest, PlatformCache())
         }.onFailure { e ->
             logger.error(e) { "Failed to update deployment $namespace/$name" }
 
@@ -155,6 +160,7 @@ class DeploymentUpdater(
         newImage: String,
         strategy: UpdateStrategy,
         expectedDigest: String?,
+        platformCache: PlatformCache,
     ) {
         runCatching {
             logger.info { "Waiting for rollout to complete..." }
@@ -176,12 +182,12 @@ class DeploymentUpdater(
 
                 // Check deployment conditions
                 val conditions = status.conditions
-                val progressingCondition = conditions.find { it.type == "Progressing" }
-                val availableCondition = conditions.find { it.type == "Available" }
+                val progressingCondition = conditions.find { it.type == DeploymentConditionType.PROGRESSING }
+                val availableCondition = conditions.find { it.type == DeploymentConditionType.AVAILABLE }
 
-                val isProgressing = progressingCondition?.status == "True"
-                val isAvailable = availableCondition?.status == "True"
-                val isComplete = progressingCondition?.reason == "NewReplicaSetAvailable"
+                val isProgressing = progressingCondition?.status == K8sConditionStatus.TRUE
+                val isAvailable = availableCondition?.status == K8sConditionStatus.TRUE
+                val isComplete = progressingCondition?.reason == DeploymentConditionReason.NEW_REPLICA_SET_AVAILABLE
 
                 // Check replica counts
                 val replicas = deployment.replicas
@@ -197,7 +203,7 @@ class DeploymentUpdater(
 
                 if (replicasReady && isAvailable && isComplete) {
                     // Verify actual pod images
-                    val allPodsUpdated = verifyPodImages(deployment, namespace, newImage, strategy, expectedDigest)
+                    val allPodsUpdated = verifyPodImages(deployment, namespace, newImage, strategy, expectedDigest, platformCache)
 
                     if (allPodsUpdated) {
                         logger.info { "Rollout completed successfully - all pods running image: $newImage" }
@@ -246,6 +252,7 @@ class DeploymentUpdater(
         expectedImage: String,
         strategy: UpdateStrategy,
         expectedDigest: String?,
+        platformCache: PlatformCache,
     ): Boolean {
         return runCatching {
             val pods = k8sClient.listPodsByLabels(namespace, deployment.selector)
@@ -261,8 +268,8 @@ class DeploymentUpdater(
                 pods.all { pod ->
                     val podReady =
                         pod.status.conditions
-                            .find { it.type == "Ready" }
-                            ?.status == "True"
+                            .find { it.type == PodConditionType.READY }
+                            ?.status == K8sConditionStatus.TRUE
 
                     val hasCorrectImage =
                         if (strategy is UpdateStrategy.Latest && expectedDigest != null) {
@@ -274,7 +281,7 @@ class DeploymentUpdater(
                             val rawPodDigest = ImageParser.extractDigest(imageID)
                             val podDigest =
                                 rawPodDigest?.let {
-                                    resolvePlatformDigest(expectedImage, it, pod)
+                                    resolvePodPlatformDigest(expectedImage, it, pod, platformCache)
                                 }
 
                             val matches = podDigest == expectedDigest
@@ -303,19 +310,29 @@ class DeploymentUpdater(
         }
     }
 
-    private suspend fun resolvePlatformDigest(
+    private suspend fun resolvePodPlatformDigest(
         image: String,
         digest: String,
         pod: com.watchcluster.client.domain.PodInfo,
+        platformCache: PlatformCache,
     ): String {
-        val platform = pod.nodeName?.let { k8sClient.getNodePlatform(it) } ?: return digest
+        val nodeName = pod.nodeName ?: return digest
+        val platform = platformCache.get(nodeName) { k8sClient.getNodePlatform(it) } ?: return digest
         val components = ImageParser.parseImageString(image)
+        return registryClient.resolvePlatformDigest(components.registry, components.repository, digest, null, platform)
+    }
 
-        return runCatching {
-            registryClient.getImageDigest(components.registry, components.repository, digest, null, platform) ?: digest
-        }.getOrElse { e ->
-            logger.debug { "Could not resolve pod digest $digest for platform $platform: ${e.message}" }
-            digest
+    private class PlatformCache {
+        private val cache = mutableMapOf<String, ImagePlatform>()
+
+        suspend fun get(
+            nodeName: String,
+            fetch: suspend (String) -> ImagePlatform?,
+        ): ImagePlatform? {
+            cache[nodeName]?.let { return it }
+            val platform = fetch(nodeName) ?: return null
+            cache[nodeName] = platform
+            return platform
         }
     }
 

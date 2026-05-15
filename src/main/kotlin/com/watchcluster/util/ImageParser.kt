@@ -26,39 +26,30 @@ object ImageParser {
                 imageAndTag.substring(0, colonIndex) to imageAndTag.substring(colonIndex + 1)
             }
 
-        val (registry, repository) =
-            when {
-                registryAndRepo.isEmpty() -> null to imageName
-                else -> {
-                    val firstSlash = registryAndRepo.indexOf("/")
-                    if (firstSlash == -1) {
-                        val possibleRegistry = registryAndRepo
-                        when {
-                            possibleRegistry.contains(".") ||
-                                possibleRegistry.contains(":") ||
-                                possibleRegistry == "localhost" -> {
-                                possibleRegistry to imageName
-                            }
-
-                            else -> null to "$registryAndRepo/$imageName"
-                        }
-                    } else {
-                        val possibleRegistry = registryAndRepo.substring(0, firstSlash)
-                        when {
-                            possibleRegistry.contains(".") ||
-                                possibleRegistry.contains(":") ||
-                                possibleRegistry == "localhost" -> {
-                                possibleRegistry to "${registryAndRepo.substring(firstSlash + 1)}/$imageName"
-                            }
-
-                            else -> null to "$registryAndRepo/$imageName"
-                        }
-                    }
-                }
-            }
+        val (registry, repository) = splitRegistry(registryAndRepo, imageName)
 
         return ImageComponents(registry, repository, tag)
     }
+
+    private fun splitRegistry(
+        registryAndRepo: String,
+        imageName: String,
+    ): Pair<String?, String> {
+        if (registryAndRepo.isEmpty()) return null to imageName
+
+        val firstSlash = registryAndRepo.indexOf("/")
+        val possibleRegistry = if (firstSlash == -1) registryAndRepo else registryAndRepo.substring(0, firstSlash)
+        val restOfPath = if (firstSlash == -1) "" else registryAndRepo.substring(firstSlash + 1)
+
+        return if (looksLikeRegistry(possibleRegistry)) {
+            val repository = if (restOfPath.isEmpty()) imageName else "$restOfPath/$imageName"
+            possibleRegistry to repository
+        } else {
+            null to "$registryAndRepo/$imageName"
+        }
+    }
+
+    private fun looksLikeRegistry(host: String): Boolean = host.contains(".") || host.contains(":") || host == "localhost"
 
     fun buildImageString(components: ImageComponents): String = buildImageString(components.registry, components.repository, components.tag)
 

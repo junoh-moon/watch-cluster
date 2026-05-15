@@ -353,7 +353,7 @@ class ImageChecker(
                         if (digest != null) {
                             val platform = pod.nodeName?.let { k8sClient.getNodePlatform(it) }
                             return CurrentImageDigest(
-                                digest = resolvePlatformDigest(registry, repository, digest, dockerAuth, platform),
+                                digest = registryClient.resolvePlatformDigest(registry, repository, digest, dockerAuth, platform),
                                 platform = platform,
                             )
                         }
@@ -371,7 +371,7 @@ class ImageChecker(
 
                         logger.debug { "Got digest from deployment spec image: $digest" }
                         return CurrentImageDigest(
-                            digest = resolvePlatformDigest(registry, repository, digest, dockerAuth, platform),
+                            digest = registryClient.resolvePlatformDigest(registry, repository, digest, dockerAuth, platform),
                             platform = platform,
                         )
                     }
@@ -392,23 +392,6 @@ class ImageChecker(
         }.getOrElse { e ->
             logger.error(e) { "Error getting current digest for $image" }
             CurrentImageDigest(digest = null, platform = null)
-        }
-    }
-
-    private suspend fun resolvePlatformDigest(
-        registry: String?,
-        repository: String,
-        digest: String,
-        dockerAuth: DockerAuth?,
-        platform: ImagePlatform?,
-    ): String {
-        if (platform == null) return digest
-
-        return runCatching {
-            registryClient.getImageDigest(registry, repository, digest, dockerAuth, platform) ?: digest
-        }.getOrElse { e ->
-            logger.debug { "Could not resolve platform digest for $digest on $platform: ${e.message}" }
-            digest
         }
     }
 }

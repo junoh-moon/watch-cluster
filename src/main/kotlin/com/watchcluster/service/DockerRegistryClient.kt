@@ -442,3 +442,19 @@ class DockerRegistryClient {
 
     private fun isDigestReference(reference: String): Boolean = reference.startsWith("sha256:")
 }
+
+suspend fun DockerRegistryClient.resolvePlatformDigest(
+    registry: String?,
+    repository: String,
+    digest: String,
+    dockerAuth: DockerAuth?,
+    platform: ImagePlatform?,
+): String {
+    if (platform == null) return digest
+    return runCatching {
+        getImageDigest(registry, repository, digest, dockerAuth, platform) ?: digest
+    }.getOrElse { e ->
+        logger.debug { "Could not resolve platform digest for $digest on $platform: ${e.message}" }
+        digest
+    }
+}
