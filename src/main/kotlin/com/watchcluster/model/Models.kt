@@ -120,6 +120,7 @@ enum class WebhookEventType {
 object WatchClusterAnnotations {
     const val ENABLED = "watch-cluster.io/enabled"
     const val CRON = "watch-cluster.io/cron"
+    const val DEFAULT_CRON = "*/5 * * * *"
     const val STRATEGY = "watch-cluster.io/strategy"
     const val CHECK_NOW = "watch-cluster.io/check-now"
     const val VERSION_PATTERN = "watch-cluster.io/version-pattern"

@@ -71,7 +71,7 @@ class WatchControllerTest {
                     annotations =
                         mapOf(
                             WatchClusterAnnotations.ENABLED to "true",
-                            WatchClusterAnnotations.CRON to "0 */10 * * * ?",
+                            WatchClusterAnnotations.CRON to "*/10 * * * *",
                             WatchClusterAnnotations.STRATEGY to "version-lock-major",
                         ),
                 )
@@ -222,17 +222,17 @@ class WatchControllerTest {
         val annotations =
             mapOf(
                 WatchClusterAnnotations.ENABLED to "true",
-                WatchClusterAnnotations.CRON to "0 */10 * * * ?",
+                WatchClusterAnnotations.CRON to "*/10 * * * *",
                 WatchClusterAnnotations.STRATEGY to "version-lock-major",
             )
 
         val enabled = annotations[WatchClusterAnnotations.ENABLED]?.toBoolean() ?: false
-        val cronExpression = annotations[WatchClusterAnnotations.CRON] ?: "0 */5 * * * ?"
+        val cronExpression = annotations[WatchClusterAnnotations.CRON] ?: WatchClusterAnnotations.DEFAULT_CRON
         val strategyStr = annotations[WatchClusterAnnotations.STRATEGY] ?: "version"
         val strategy = UpdateStrategy.fromString(strategyStr)
 
         assertTrue(enabled)
-        assertEquals("0 */10 * * * ?", cronExpression)
+        assertEquals("*/10 * * * *", cronExpression)
         assertTrue(strategy is UpdateStrategy.Version)
         assertTrue(strategy.lockMajorVersion)
     }
@@ -296,7 +296,7 @@ class WatchControllerTest {
                     annotations =
                         mapOf(
                             WatchClusterAnnotations.ENABLED to "true",
-                            WatchClusterAnnotations.CRON to "0 */10 * * * ?",
+                            WatchClusterAnnotations.CRON to "*/10 * * * *",
                             WatchClusterAnnotations.STRATEGY to "version",
                             WatchClusterAnnotations.CHECK_NOW to "true",
                         ),
@@ -510,7 +510,7 @@ class WatchControllerTest {
                 WatchedDeployment(
                     namespace = "immich",
                     name = "immich-server",
-                    cronExpression = "0 */10 * * * ?",
+                    cronExpression = "*/10 * * * *",
                     updateStrategy = UpdateStrategy.Version(),
                     currentImage = "ghcr.io/immich-app/immich-server:v2.2.2@sha256:old",
                     imagePullSecrets = emptyList(),

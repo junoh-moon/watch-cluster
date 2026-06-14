@@ -7,7 +7,7 @@ metadata:
     app: watch-cluster
   annotations:
     watch-cluster.io/enabled: "true"
-    watch-cluster.io/cron: "0 * * * * ?"  # Every minute
+    watch-cluster.io/cron: "* * * * *"  # Every minute
     watch-cluster.io/strategy: "version"
 
     reloader.stakater.com/auto: "true"

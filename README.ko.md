@@ -100,7 +100,7 @@ metadata:
   name: my-app
   annotations:
     watch-cluster.io/enabled: "true"
-    watch-cluster.io/cron: "0 */30 * * * ?"  # 30분마다 확인
+    watch-cluster.io/cron: "*/30 * * * *"    # 30분마다 확인
     watch-cluster.io/strategy: "version"      # 버전 기반 업데이트
 spec:
   replicas: 3
@@ -124,7 +124,7 @@ spec:
 | Annotation | 설명 | 필수 | 기본값 |
 |------------|------|------|--------|
 | `watch-cluster.io/enabled` | 모니터링 활성화 여부 | 예 | - |
-| `watch-cluster.io/cron` | 업데이트 확인 주기 (Quartz cron) | 아니오 | `0 */5 * * * ?` |
+| `watch-cluster.io/cron` | 업데이트 확인 주기 (Unix cron) | 아니오 | `*/5 * * * *` |
 | `watch-cluster.io/strategy` | 업데이트 전략 (`version`, `version-lock-major`, `latest`) | 아니오 | `version` |
 | `watch-cluster.io/check-now` | 즉시 업데이트 확인을 한 번 실행한 뒤 이 annotation 제거 | 아니오 | - |
 
@@ -194,14 +194,18 @@ annotations:
 
 ### Cron 표현식 예시
 
+5필드 Unix cron 형식을 사용합니다: `분 시 일 월 요일`.
+
 | 표현식 | 설명 |
 |--------|------|
-| `0 */5 * * * ?` | 5분마다 |
-| `0 0 * * * ?` | 매시간 정각 |
-| `0 0 2 * * ?` | 매일 오전 2시 |
-| `0 0 9-17 * * MON-FRI` | 평일 9시-17시 매시간 |
-| `0 0 0 * * MON` | 매주 월요일 자정 |
-| `0 0 0 1 * ?` | 매월 1일 자정 |
+| `*/5 * * * *` | 5분마다 |
+| `0 * * * *` | 매시간 정각 |
+| `0 2 * * *` | 매일 오전 2시 |
+| `0 9-17 * * MON-FRI` | 평일 9시-17시 매시간 |
+| `0 0 * * MON` | 매주 월요일 자정 |
+| `0 0 1 * *` | 매월 1일 자정 |
+
+`*/N`은 고정 간격 타이머가 아니라 해당 필드에서 `N` 간격으로 매칭되는 값입니다. 예를 들어 `*/7 * * * *`는 매시간 `0, 7, 14, ..., 56`분에 실행됩니다.
 
 ## 고급 사용법
 
@@ -310,7 +314,7 @@ kubectl get events --field-selector reason=ImageUpdated
 ```yaml
 annotations:
   watch-cluster.io/enabled: "true"
-  watch-cluster.io/cron: "0 */5 * * * ?"    # 5분마다
+  watch-cluster.io/cron: "*/5 * * * *"      # 5분마다
   watch-cluster.io/strategy: "latest"
 ```
 
@@ -318,7 +322,7 @@ annotations:
 ```yaml
 annotations:
   watch-cluster.io/enabled: "true"
-  watch-cluster.io/cron: "0 0 2 * * ?"     # 매일 새벽 2시
+  watch-cluster.io/cron: "0 2 * * *"       # 매일 새벽 2시
   watch-cluster.io/strategy: "version"
 ```
 
@@ -326,7 +330,7 @@ annotations:
 ```yaml
 annotations:
   watch-cluster.io/enabled: "false"        # 필요시만 활성화
-  watch-cluster.io/cron: "0 0 3 * * SUN"   # 일요일 새벽 3시
+  watch-cluster.io/cron: "0 3 * * SUN"     # 일요일 새벽 3시
   watch-cluster.io/strategy: "version"
 ```
 

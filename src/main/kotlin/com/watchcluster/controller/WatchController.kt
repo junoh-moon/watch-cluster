@@ -100,7 +100,7 @@ class WatchController(
         val name = deployment.name
         val key = "$namespace/$name"
 
-        val cronExpression = annotations[WatchClusterAnnotations.CRON] ?: "0 */5 * * * ?"
+        val cronExpression = annotations[WatchClusterAnnotations.CRON] ?: WatchClusterAnnotations.DEFAULT_CRON
         val strategyStr = annotations[WatchClusterAnnotations.STRATEGY] ?: "version"
         val strategy = UpdateStrategy.fromString(strategyStr)
 

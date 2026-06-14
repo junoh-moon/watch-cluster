@@ -20,10 +20,13 @@ import java.util.concurrent.ConcurrentHashMap
 
 private val logger = KotlinLogging.logger {}
 
+private val whitespace = Regex("\\s+")
+
 class CronScheduler {
     private val jobs = ConcurrentHashMap<String, Job>()
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-    private val cronParser = CronParser(CronDefinitionBuilder.instanceDefinitionFor(CronType.QUARTZ))
+    private val unixCronParser = CronParser(CronDefinitionBuilder.instanceDefinitionFor(CronType.UNIX))
+    private val quartzCronParser = CronParser(CronDefinitionBuilder.instanceDefinitionFor(CronType.QUARTZ))
 
     fun scheduleJob(
         jobId: String,
@@ -33,7 +36,7 @@ class CronScheduler {
         cancelJob(jobId)
 
         runCatching {
-            val cron = cronParser.parse(cronExpression)
+            val cron = parseCron(cronExpression)
             val executionTime = ExecutionTime.forCron(cron)
 
             val job =
@@ -66,6 +69,22 @@ class CronScheduler {
             logger.info { "Scheduled job: $jobId with cron: $cronExpression" }
         }.onFailure { e ->
             logger.error(e) { "Failed to schedule job: $jobId with cron: $cronExpression" }
+        }
+    }
+
+    internal fun parseCron(cronExpression: String) =
+        cronExpression.trim().let { expression ->
+            parserFor(expression).parse(expression)
+        }
+
+    private fun parserFor(cronExpression: String): CronParser {
+        val fieldCount = cronExpression.split(whitespace).size
+        return when (fieldCount) {
+            5 -> unixCronParser
+            6, 7 -> quartzCronParser
+            else -> throw IllegalArgumentException(
+                "Unsupported cron expression. Use 5-field Unix cron or 6/7-field Quartz cron.",
+            )
         }
     }
 

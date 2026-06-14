@@ -100,7 +100,7 @@ metadata:
   name: my-app
   annotations:
     watch-cluster.io/enabled: "true"
-    watch-cluster.io/cron: "0 */30 * * * ?"  # Check every 30 minutes
+    watch-cluster.io/cron: "*/30 * * * *"    # Check every 30 minutes
     watch-cluster.io/strategy: "version"      # Version-based updates
 spec:
   replicas: 3
@@ -124,7 +124,7 @@ spec:
 | Annotation | Description | Required | Default |
 |------------|-------------|----------|---------|
 | `watch-cluster.io/enabled` | Enable monitoring | Yes | - |
-| `watch-cluster.io/cron` | Update check interval (Quartz cron) | No | `0 */5 * * * ?` |
+| `watch-cluster.io/cron` | Update check interval (Unix cron) | No | `*/5 * * * *` |
 | `watch-cluster.io/strategy` | Update strategy (`version`, `version-lock-major`, `latest`) | No | `version` |
 | `watch-cluster.io/check-now` | Trigger one immediate update check, then remove this annotation | No | - |
 
@@ -194,14 +194,18 @@ Detects actual changes by comparing image digests. Supports tags like:
 
 ### Cron Expression Examples
 
+Uses 5-field Unix cron: `minute hour day-of-month month day-of-week`.
+
 | Expression | Description |
 |------------|-------------|
-| `0 */5 * * * ?` | Every 5 minutes |
-| `0 0 * * * ?` | Every hour on the hour |
-| `0 0 2 * * ?` | Daily at 2 AM |
-| `0 0 9-17 * * MON-FRI` | Every hour 9 AM-5 PM on weekdays |
-| `0 0 0 * * MON` | Every Monday at midnight |
-| `0 0 0 1 * ?` | First day of every month at midnight |
+| `*/5 * * * *` | Every 5 minutes |
+| `0 * * * *` | Every hour on the hour |
+| `0 2 * * *` | Daily at 2 AM |
+| `0 9-17 * * MON-FRI` | Every hour 9 AM-5 PM on weekdays |
+| `0 0 * * MON` | Every Monday at midnight |
+| `0 0 1 * *` | First day of every month at midnight |
+
+`*/N` is not a fixed-interval timer. It matches values stepped by `N` within that field. For example, `*/7 * * * *` runs at minutes `0, 7, 14, ..., 56` every hour.
 
 ## Advanced Usage
 
@@ -310,7 +314,7 @@ kubectl get events --field-selector reason=ImageUpdated
 ```yaml
 annotations:
   watch-cluster.io/enabled: "true"
-  watch-cluster.io/cron: "0 */5 * * * ?"    # Every 5 minutes
+  watch-cluster.io/cron: "*/5 * * * *"      # Every 5 minutes
   watch-cluster.io/strategy: "latest"
 ```
 
@@ -318,7 +322,7 @@ annotations:
 ```yaml
 annotations:
   watch-cluster.io/enabled: "true"
-  watch-cluster.io/cron: "0 0 2 * * ?"     # Daily at 2 AM
+  watch-cluster.io/cron: "0 2 * * *"       # Daily at 2 AM
   watch-cluster.io/strategy: "version"
 ```
 
@@ -326,7 +330,7 @@ annotations:
 ```yaml
 annotations:
   watch-cluster.io/enabled: "false"        # Enable only when needed
-  watch-cluster.io/cron: "0 0 3 * * SUN"   # Sunday at 3 AM
+  watch-cluster.io/cron: "0 3 * * SUN"     # Sunday at 3 AM
   watch-cluster.io/strategy: "version"
 ```
 

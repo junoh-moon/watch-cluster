@@ -5,7 +5,7 @@ metadata:
   namespace: default
   annotations:
     watch-cluster.io/enabled: "true"
-    watch-cluster.io/cron: "0 */10 * * * ?"  # Check every 10 minutes
+    watch-cluster.io/cron: "*/10 * * * *"    # Check every 10 minutes
     watch-cluster.io/strategy: "version"      # Options: "version", "version-lock-major", or "latest"
     # Note: Use "latest" strategy for non-version tags like stable, release-candidate, etc.
 spec:
