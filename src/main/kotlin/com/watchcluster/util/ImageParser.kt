@@ -66,6 +66,24 @@ object ImageParser {
         return versionPart.split(".").map { it.toIntOrNull() ?: 0 }
     }
 
+    // Conservative prerelease detection: only well-known prerelease markers are blocked.
+    // Intentionally excludes "pre" to avoid clashing with channel suffixes like
+    // linuxserver's "-previous". Variant/channel suffixes (previous, php8, ls393,
+    // alpine, develop, fpm, ...) are NOT treated as prereleases.
+    private val PRERELEASE_TOKENS = setOf("rc", "alpha", "beta")
+    private const val SUFFIX_DELIMITERS = ".-_"
+
+    fun isPrerelease(tag: String): Boolean {
+        // Compare the leading word of the suffix (e.g. "rc" in "rc.2", "beta" in
+        // "beta1") against the known markers, so variants like "previous" stay clear.
+        val suffixHead =
+            tag
+                .substringAfter("-", "")
+                .lowercase()
+                .takeWhile { it !in SUFFIX_DELIMITERS && !it.isDigit() }
+        return suffixHead in PRERELEASE_TOKENS
+    }
+
     fun removeDigest(image: String): String = image.substringBefore("@")
 
     fun addDigest(

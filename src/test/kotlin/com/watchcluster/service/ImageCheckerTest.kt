@@ -831,7 +831,7 @@ class ImageCheckerTest {
         }
 
     @Test
-    fun `test checkForUpdate with major version lock and prerelease versions`() =
+    fun `test checkForUpdate with major version lock excludes prerelease versions`() =
         runBlocking {
             // Given
             val currentImage = "myapp:v1.0.0"
@@ -848,9 +848,10 @@ class ImageCheckerTest {
                     null,
                 )
 
-            // Then
+            // Then - prereleases (v1.1.0-beta, v1.2.0-rc1, v2.0.0-alpha) are skipped,
+            // so the newest stable within the locked major is selected.
             assertNotNull(result.newImage)
-            assertEquals("myapp:v1.2.0-rc1", result.newImage) // Should include prerelease within major version
+            assertEquals("myapp:v1.1.0", result.newImage)
         }
 
     @Test

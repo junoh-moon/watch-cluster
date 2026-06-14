@@ -155,6 +155,7 @@ class ImageChecker(
         val newerVersions =
             availableTags
                 .filter { ImageParser.isVersionTag(it) }
+                .filterNot { ImageParser.isPrerelease(it) }
                 .map { tagString -> tagString to ImageParser.parseVersion(tagString) }
                 .filter { (_, version) ->
                     if (strategy.lockMajorVersion) {

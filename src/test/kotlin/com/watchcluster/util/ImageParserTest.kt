@@ -74,6 +74,32 @@ class ImageParserTest {
     }
 
     @Test
+    fun `isPrerelease flags rc alpha beta but not channel or variant suffixes`() {
+        // Prereleases that must be blocked
+        assertTrue(ImageParser.isPrerelease("2.1.2-rc.2"))
+        assertTrue(ImageParser.isPrerelease("1.0.0-rc1"))
+        assertTrue(ImageParser.isPrerelease("v1.2.0-rc1"))
+        assertTrue(ImageParser.isPrerelease("1.1.0-beta"))
+        assertTrue(ImageParser.isPrerelease("1.0.0-beta.3"))
+        assertTrue(ImageParser.isPrerelease("v2.0.0-alpha"))
+        assertTrue(ImageParser.isPrerelease("v2.0.0-beta.10"))
+
+        // Stable tags are never prereleases
+        assertFalse(ImageParser.isPrerelease("2.1.1"))
+        assertFalse(ImageParser.isPrerelease("v1.0.0"))
+
+        // Channel / variant suffixes must NOT be treated as prereleases.
+        // "previous" must survive even though it starts with "pre".
+        assertFalse(ImageParser.isPrerelease("31.0.14-previous"))
+        assertFalse(ImageParser.isPrerelease("31.0.9-ls393"))
+        assertFalse(ImageParser.isPrerelease("31.0.7-php8"))
+        assertFalse(ImageParser.isPrerelease("31.0.5-develop"))
+        assertFalse(ImageParser.isPrerelease("1.2.3-apache"))
+        assertFalse(ImageParser.isPrerelease("1.2.3-fpm-alpine"))
+        assertFalse(ImageParser.isPrerelease("1.2.3-alpine3.20"))
+    }
+
+    @Test
     fun `compareVersions handles different length versions`() {
         assertTrue((listOf(2, 0, 0) > listOf(1, 0, 0)))
         assertTrue((listOf(1, 0, 0) < listOf(1, 1, 0)))
