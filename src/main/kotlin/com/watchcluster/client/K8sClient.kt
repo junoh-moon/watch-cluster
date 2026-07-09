@@ -19,6 +19,16 @@ interface K8sClient {
         patchJson: String,
     ): DeploymentInfo?
 
+    /**
+     * Lists all deployments across all namespaces.
+     *
+     * Implementations must propagate failures instead of returning an empty
+     * list — callers rely on the distinction between "no deployments" and
+     * "list failed" (e.g. reconcile must not prune watched deployments when
+     * the list call fails).
+     */
+    suspend fun listDeployments(): List<DeploymentInfo>
+
     suspend fun watchDeployments(watcher: K8sWatcher<DeploymentInfo>): Unit
 
     suspend fun recordDeploymentEvent(

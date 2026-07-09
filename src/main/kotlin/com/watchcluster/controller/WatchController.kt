@@ -1,64 +1,71 @@
 package com.watchcluster.controller
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.watchcluster.client.K8sClient
 import com.watchcluster.client.K8sWatcher
 import com.watchcluster.client.domain.DeploymentInfo
 import com.watchcluster.client.domain.EventType
 import com.watchcluster.client.domain.K8sWatchEvent
-import com.watchcluster.model.DeploymentEventData
 import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.model.WatchClusterAnnotations
 import com.watchcluster.model.WatchedDeployment
 import com.watchcluster.model.WebhookConfig
-import com.watchcluster.model.WebhookEvent
-import com.watchcluster.model.WebhookEventType
 import com.watchcluster.service.DeploymentUpdater
 import com.watchcluster.service.ImageChecker
 import com.watchcluster.service.WebhookService
-import com.watchcluster.util.CronScheduler
+import com.watchcluster.util.CronTicker
+import com.watchcluster.util.CronUtilsTicker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import mu.KotlinLogging
 import java.util.concurrent.ConcurrentHashMap
 
 private val logger = KotlinLogging.logger {}
-private val objectMapper = ObjectMapper()
 
-internal enum class DeploymentCheckStatus {
-    UPDATED,
-    NO_UPDATE,
-    FAILED,
-    SKIPPED,
-}
-
-internal data class DeploymentCheckResult(
-    val status: DeploymentCheckStatus,
-    val message: String,
-)
-
+/**
+ * Watches deployments and converges the set of [DeploymentWorker]s toward
+ * the cluster state, level-triggered: watch events apply incremental updates
+ * and a periodic reconcile re-applies the full snapshot, so any event lost
+ * during a watch outage (including DELETED) is recovered within one
+ * reconcile interval.
+ */
 class WatchController(
     private val k8sClient: K8sClient,
     private val coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob()),
     imageChecker: ImageChecker? = null,
     deploymentUpdater: DeploymentUpdater? = null,
-    cronScheduler: CronScheduler? = null,
+    cronTicker: CronTicker? = null,
 ) {
     private val webhookConfig = WebhookConfig.fromEnvironment()
     private val webhookService = WebhookService(webhookConfig)
     private val imageChecker = imageChecker ?: ImageChecker(k8sClient)
     private val deploymentUpdater = deploymentUpdater ?: DeploymentUpdater(k8sClient, webhookService)
-    private val cronScheduler = cronScheduler ?: CronScheduler()
-    internal val watchedDeployments = ConcurrentHashMap<String, WatchedDeployment>()
-    internal val deploymentMutexes = ConcurrentHashMap<String, Mutex>()
+    private val cronTicker = cronTicker ?: CronUtilsTicker()
+    internal val workers = ConcurrentHashMap<String, DeploymentWorker>()
+    private var reconcileJob: Job? = null
 
     suspend fun start() {
         logger.info { "Starting deployment watcher..." }
 
+        startWatch()
+
+        // Launched only after the watch is established, so a fatal watch
+        // failure propagating out of start() leaves no orphaned reconcile
+        // loop behind.
+        reconcileJob =
+            coroutineScope.launch {
+                while (isActive) {
+                    delay(RECONCILE_INTERVAL_MS)
+                    reconcileDeployments()
+                }
+            }
+    }
+
+    private suspend fun startWatch() {
         k8sClient.watchDeployments(
             object : K8sWatcher<DeploymentInfo> {
                 override suspend fun eventReceived(event: K8sWatchEvent<DeploymentInfo>) {
@@ -70,10 +77,7 @@ class WatchController(
 
                         EventType.DELETED -> {
                             val key = "${deployment.namespace}/${deployment.name}"
-                            watchedDeployments.remove(key)
-                            deploymentMutexes.remove(key)
-                            cronScheduler.cancelJob(key)
-                            logger.info { "Stopped watching deployment: $key" }
+                            workers[key]?.stop()
                         }
 
                         EventType.ERROR -> {
@@ -89,16 +93,50 @@ class WatchController(
         )
     }
 
+    fun stop() {
+        reconcileJob?.cancel()
+        workers.values.forEach { it.stop() }
+    }
+
+    internal suspend fun reconcileDeployments() {
+        val deployments =
+            runCatching { k8sClient.listDeployments() }
+                .getOrElse { e ->
+                    // A failed list is not an empty cluster — pruning here
+                    // would tear down every watched deployment.
+                    logger.error(e) { "Error listing deployments during reconcile; keeping current watch state" }
+                    return
+                }
+
+        deployments.forEach { deployment ->
+            handleDeployment(deployment)
+        }
+
+        // Prune workers whose deployment disappeared while watch events were
+        // missed — a DELETED event lost during a watch outage is recovered
+        // here. A worker created from a watch event racing this snapshot may
+        // be stopped spuriously; the next event or reconcile recreates it.
+        val liveKeys = deployments.mapTo(mutableSetOf()) { "${it.namespace}/${it.name}" }
+        workers.forEach { (key, worker) ->
+            if (key !in liveKeys) {
+                worker.stop()
+            }
+        }
+    }
+
     private suspend fun handleDeployment(deployment: DeploymentInfo) {
         val annotations = deployment.annotations
         val enabled = annotations[WatchClusterAnnotations.ENABLED]?.toBoolean() ?: false
         val checkNowRequested = annotations.containsKey(WatchClusterAnnotations.CHECK_NOW)
 
-        if (!enabled) return
-
         val namespace = deployment.namespace
         val name = deployment.name
         val key = "$namespace/$name"
+
+        if (!enabled) {
+            workers[key]?.stop()
+            return
+        }
 
         val cronExpression = annotations[WatchClusterAnnotations.CRON] ?: WatchClusterAnnotations.DEFAULT_CRON
         val strategyStr = annotations[WatchClusterAnnotations.STRATEGY] ?: "version"
@@ -107,217 +145,71 @@ class WatchController(
         val containers = deployment.containers
         if (containers.isEmpty()) return
 
-        val currentImage = containers[0].image
-
-        val imagePullSecrets = deployment.imagePullSecrets
-
-        val watchedDeployment =
+        val spec =
             WatchedDeployment(
                 namespace = namespace,
                 name = name,
                 cronExpression = cronExpression,
                 updateStrategy = strategy,
-                currentImage = currentImage,
-                imagePullSecrets = imagePullSecrets,
+                currentImage = containers[0].image,
+                imagePullSecrets = deployment.imagePullSecrets,
             )
 
-        val mutex = deploymentMutexes.computeIfAbsent(key) { Mutex() }
-
-        mutex.withLock {
-            cronScheduler.cancelAndJoinJob(key)
-            watchedDeployments[key] = watchedDeployment
-            cronScheduler.scheduleJob(key, cronExpression) {
-                checkAndUpdateDeployment(key)
+        while (true) {
+            val worker = obtainWorker(key, spec)
+            var delivered = worker.send(WorkerCommand.SpecChanged(spec))
+            if (delivered && checkNowRequested) {
+                delivered = worker.send(WorkerCommand.ManualCheck)
             }
-        }
-
-        webhookService.sendWebhook(
-            WebhookEvent(
-                eventType = WebhookEventType.DEPLOYMENT_DETECTED,
-                timestamp =
-                    java.time.Instant
-                        .now()
-                        .toString(),
-                deployment = DeploymentEventData(namespace, name, currentImage),
-                details =
-                    mapOf(
-                        "cronExpression" to cronExpression,
-                        "updateStrategy" to strategy.displayName,
-                    ),
-            ),
-        )
-
-        logger.info { "Watching deployment: $key with cron: $cronExpression and strategy: $strategy" }
-
-        if (checkNowRequested) {
-            triggerManualCheck(key, namespace, name)
+            if (delivered) return
+            // The worker was stopped between lookup and send; retry with a
+            // fresh one.
         }
     }
 
-    private fun triggerManualCheck(
+    /**
+     * Returns the live worker for [key], replacing a stopped one. The
+     * replacement waits for its predecessor to terminate before processing,
+     * so at most one check per deployment ever runs even across
+     * disable/re-enable races.
+     */
+    private fun obtainWorker(
         key: String,
-        namespace: String,
-        name: String,
-    ) {
-        coroutineScope.launch {
-            val removed = removeCheckNowAnnotation(namespace, name)
-            if (!removed) {
-                recordDeploymentEvent(
-                    namespace = namespace,
-                    deploymentName = name,
-                    reason = "ManualCheckFailed",
-                    message = "Manual check for $key was not run because ${WatchClusterAnnotations.CHECK_NOW} could not be removed",
-                    type = "Warning",
+        initialSpec: WatchedDeployment,
+    ): DeploymentWorker {
+        while (true) {
+            val existing = workers[key]
+            if (existing != null && !existing.isStopRequested) return existing
+
+            val replacement =
+                DeploymentWorker(
+                    key = key,
+                    initialSpec = initialSpec,
+                    parentScope = coroutineScope,
+                    cronTicker = cronTicker,
+                    imageChecker = imageChecker,
+                    deploymentUpdater = deploymentUpdater,
+                    webhookService = webhookService,
+                    k8sClient = k8sClient,
+                    predecessor = existing,
+                    onTerminated = { workers.remove(key, it) },
                 )
-                return@launch
-            }
 
-            recordDeploymentEvent(
-                namespace = namespace,
-                deploymentName = name,
-                reason = "ManualCheckRequested",
-                message = "Manual check requested for $key by ${WatchClusterAnnotations.CHECK_NOW}",
-                type = "Normal",
-            )
-
-            val result = checkAndUpdateDeployment(key)
-            recordManualCheckResult(namespace, name, result)
-        }
-    }
-
-    private suspend fun removeCheckNowAnnotation(
-        namespace: String,
-        name: String,
-    ): Boolean {
-        val annotationPatch: Map<String, String?> = mapOf(WatchClusterAnnotations.CHECK_NOW to null)
-        val patchJson =
-            objectMapper.writeValueAsString(
-                mapOf(
-                    "metadata" to
-                        mapOf(
-                            "annotations" to annotationPatch,
-                        ),
-                ),
-            )
-
-        return k8sClient.patchDeployment(namespace, name, patchJson) != null
-    }
-
-    private suspend fun recordManualCheckResult(
-        namespace: String,
-        name: String,
-        result: DeploymentCheckResult,
-    ) {
-        val (reason, type) =
-            when (result.status) {
-                DeploymentCheckStatus.UPDATED -> "ManualCheckUpdated" to "Normal"
-                DeploymentCheckStatus.NO_UPDATE -> "ManualCheckNoUpdate" to "Normal"
-                DeploymentCheckStatus.FAILED -> "ManualCheckFailed" to "Warning"
-                DeploymentCheckStatus.SKIPPED -> "ManualCheckSkipped" to "Warning"
-            }
-
-        recordDeploymentEvent(
-            namespace = namespace,
-            deploymentName = name,
-            reason = reason,
-            message = result.message,
-            type = type,
-        )
-    }
-
-    private suspend fun recordDeploymentEvent(
-        namespace: String,
-        deploymentName: String,
-        reason: String,
-        message: String,
-        type: String,
-    ) {
-        runCatching {
-            k8sClient.recordDeploymentEvent(namespace, deploymentName, reason, message, type)
-        }.onFailure { e ->
-            logger.warn(e) { "Failed to audit event $reason for deployment $namespace/$deploymentName" }
-        }
-    }
-
-    internal suspend fun checkAndUpdateDeployment(key: String): DeploymentCheckResult {
-        val mutex =
-            deploymentMutexes[key] ?: run {
-                val message = "Mutex not found for deployment $key"
-                logger.warn { message }
-                return DeploymentCheckResult(DeploymentCheckStatus.SKIPPED, message)
-            }
-
-        return mutex.withLock {
-            // Retrieve latest deployment info inside mutex
-            val deployment =
-                watchedDeployments[key] ?: run {
-                    val message = "Deployment not found: $key"
-                    logger.warn { message }
-                    return@withLock DeploymentCheckResult(DeploymentCheckStatus.SKIPPED, message)
+            val installed =
+                if (existing == null) {
+                    workers.putIfAbsent(key, replacement) == null
+                } else {
+                    workers.replace(key, existing, replacement)
                 }
 
-            runCatching {
-                logger.info { "Current image: ${deployment.currentImage}" }
-                logger.info { "Checking for updates: ${deployment.namespace}/${deployment.name}" }
-
-                val updateResult =
-                    imageChecker.checkForUpdate(
-                        deployment.currentImage,
-                        deployment.updateStrategy,
-                        deployment.namespace,
-                        deployment.imagePullSecrets,
-                        deployment.name,
-                    )
-
-                when {
-                    // Has update
-                    updateResult.newImage != null -> {
-                        logger.info {
-                            buildString {
-                                append("Found update for ${deployment.namespace}/${deployment.name}: ${updateResult.newImage}")
-                                updateResult.reason?.let { append(" $it") }
-                            }
-                        }
-                        deploymentUpdater.updateDeployment(
-                            deployment.namespace,
-                            deployment.name,
-                            updateResult.newImage,
-                            updateResult.currentImage,
-                            deployment.updateStrategy,
-                            updateResult.newDigest,
-                        )
-
-                        // Update cache to reflect the new image
-                        val latest = watchedDeployments[key] ?: deployment
-                        watchedDeployments[key] =
-                            latest.copy(
-                                currentImage = updateResult.newImage,
-                            )
-
-                        DeploymentCheckResult(
-                            DeploymentCheckStatus.UPDATED,
-                            "Updated ${deployment.namespace}/${deployment.name} to ${updateResult.newImage}",
-                        )
-                    }
-
-                    else -> {
-                        val message =
-                            updateResult.reason
-                                ?: "No update available for ${deployment.namespace}/${deployment.name}"
-                        logger.debug {
-                            buildString {
-                                append("No update available for ${deployment.namespace}/${deployment.name}.")
-                                updateResult.reason?.let { append(" $it") }
-                            }
-                        }
-                        DeploymentCheckResult(DeploymentCheckStatus.NO_UPDATE, message)
-                    }
-                }
-            }.getOrElse { e ->
-                val message = "Error checking deployment ${deployment.namespace}/${deployment.name}: ${e.message ?: "unknown error"}"
-                logger.error(e) { "Error checking deployment ${deployment.namespace}/${deployment.name}" }
-                DeploymentCheckResult(DeploymentCheckStatus.FAILED, message)
+            if (installed) {
+                replacement.start()
+                return replacement
             }
         }
+    }
+
+    private companion object {
+        const val RECONCILE_INTERVAL_MS = 60_000L
     }
 }

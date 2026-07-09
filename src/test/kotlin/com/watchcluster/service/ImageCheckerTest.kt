@@ -56,6 +56,8 @@ class ImageCheckerTest {
             patchJson: String,
         ): DeploymentInfo? = deploymentResponse
 
+        override suspend fun listDeployments(): List<DeploymentInfo> = throw UnsupportedOperationException("not used by ImageChecker tests")
+
         override suspend fun watchDeployments(watcher: com.watchcluster.client.K8sWatcher<DeploymentInfo>) {}
 
         override suspend fun getPod(

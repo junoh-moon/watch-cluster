@@ -30,12 +30,16 @@ import kotlinx.coroutines.withContext
 import mu.KotlinLogging
 import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
 
 private val logger = KotlinLogging.logger {}
 
 class Fabric8K8sClient(
     private val kubernetesClient: KubernetesClient,
 ) : K8sClient {
+    private val watchScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val deploymentWatches = CopyOnWriteArrayList<ResilientWatch>()
+
     override suspend fun getDeployment(
         namespace: String,
         name: String,
@@ -79,52 +83,85 @@ class Fabric8K8sClient(
             }
         }
 
-    override suspend fun watchDeployments(watcher: K8sWatcher<DeploymentInfo>): Unit =
+    override suspend fun listDeployments(): List<DeploymentInfo> =
         withContext(Dispatchers.IO) {
-            val watchScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-
-            val fabric8Watcher =
-                object : Watcher<Deployment> {
-                    override fun eventReceived(
-                        action: Watcher.Action,
-                        resource: Deployment,
-                    ) {
-                        val eventType =
-                            when (action) {
-                                Watcher.Action.ADDED -> EventType.ADDED
-                                Watcher.Action.MODIFIED -> EventType.MODIFIED
-                                Watcher.Action.DELETED -> EventType.DELETED
-                                Watcher.Action.ERROR -> EventType.ERROR
-                                Watcher.Action.BOOKMARK -> return // Ignore bookmark events
-                            }
-
-                        val deploymentInfo = mapToDeploymentInfo(resource)
-                        watchScope.launch {
-                            try {
-                                watcher.eventReceived(K8sWatchEvent(eventType, deploymentInfo))
-                            } catch (e: Exception) {
-                                logger.error(e) { "Error in watcher.eventReceived" }
-                            }
-                        }
-                    }
-
-                    override fun onClose(cause: WatcherException?) {
-                        watchScope.launch {
-                            try {
-                                watcher.onClose(cause)
-                            } catch (e: Exception) {
-                                logger.error(e) { "Error in watcher.onClose" }
-                            }
-                        }
-                    }
-                }
-
+            // Failures propagate: callers must be able to distinguish
+            // "no deployments" from "list failed".
             kubernetesClient
                 .apps()
                 .deployments()
                 .inAnyNamespace()
-                .watch(fabric8Watcher)
+                .list()
+                .items
+                .map(::mapToDeploymentInfo)
         }
+
+    override suspend fun watchDeployments(watcher: K8sWatcher<DeploymentInfo>): Unit =
+        withContext(Dispatchers.IO) {
+            val resilientWatch =
+                ResilientWatch(
+                    scope = watchScope,
+                    initialReconnectDelayMillis = DEPLOYMENT_WATCH_RECONNECT_INITIAL_DELAY_MS,
+                    maxReconnectDelayMillis = DEPLOYMENT_WATCH_RECONNECT_MAX_DELAY_MS,
+                    openWatch = { onClose -> openDeploymentWatch(watcher, onClose) },
+                    onClose = { cause -> notifyWatchClosed(watcher, cause) },
+                )
+
+            deploymentWatches += resilientWatch
+            resilientWatch.start()
+        }
+
+    private fun openDeploymentWatch(
+        watcher: K8sWatcher<DeploymentInfo>,
+        onClose: (Exception?) -> Unit,
+    ): AutoCloseable {
+        val fabric8Watcher =
+            object : Watcher<Deployment> {
+                override fun eventReceived(
+                    action: Watcher.Action,
+                    resource: Deployment,
+                ) {
+                    val eventType =
+                        when (action) {
+                            Watcher.Action.ADDED -> EventType.ADDED
+                            Watcher.Action.MODIFIED -> EventType.MODIFIED
+                            Watcher.Action.DELETED -> EventType.DELETED
+                            Watcher.Action.ERROR -> EventType.ERROR
+                            Watcher.Action.BOOKMARK -> return // Ignore bookmark events
+                        }
+
+                    val deploymentInfo = mapToDeploymentInfo(resource)
+                    watchScope.launch {
+                        try {
+                            watcher.eventReceived(K8sWatchEvent(eventType, deploymentInfo))
+                        } catch (e: Exception) {
+                            logger.error(e) { "Error in watcher.eventReceived" }
+                        }
+                    }
+                }
+
+                override fun onClose(cause: WatcherException?) {
+                    onClose(cause)
+                }
+            }
+
+        return kubernetesClient
+            .apps()
+            .deployments()
+            .inAnyNamespace()
+            .watch(fabric8Watcher)
+    }
+
+    private suspend fun notifyWatchClosed(
+        watcher: K8sWatcher<DeploymentInfo>,
+        cause: Exception?,
+    ) {
+        try {
+            watcher.onClose(cause)
+        } catch (e: Exception) {
+            logger.error(e) { "Error in watcher.onClose" }
+        }
+    }
 
     override suspend fun recordDeploymentEvent(
         namespace: String,
@@ -387,5 +424,10 @@ class Fabric8K8sClient(
             type = secret.type ?: "",
             data = decodedData,
         )
+    }
+
+    private companion object {
+        const val DEPLOYMENT_WATCH_RECONNECT_INITIAL_DELAY_MS = 5_000L
+        const val DEPLOYMENT_WATCH_RECONNECT_MAX_DELAY_MS = 60_000L
     }
 }
