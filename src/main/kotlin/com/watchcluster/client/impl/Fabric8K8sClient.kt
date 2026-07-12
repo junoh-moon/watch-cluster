@@ -25,7 +25,6 @@ import io.fabric8.kubernetes.client.WatcherException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import mu.KotlinLogging
 import java.util.Base64
@@ -98,13 +97,14 @@ class Fabric8K8sClient(
 
     override suspend fun watchDeployments(watcher: K8sWatcher<DeploymentInfo>): Unit =
         withContext(Dispatchers.IO) {
+            val dispatcher = OrderedWatchDispatcher(watchScope, watcher)
             val resilientWatch =
                 ResilientWatch(
                     scope = watchScope,
                     initialReconnectDelayMillis = DEPLOYMENT_WATCH_RECONNECT_INITIAL_DELAY_MS,
                     maxReconnectDelayMillis = DEPLOYMENT_WATCH_RECONNECT_MAX_DELAY_MS,
-                    openWatch = { onClose -> openDeploymentWatch(watcher, onClose) },
-                    onClose = { cause -> notifyWatchClosed(watcher, cause) },
+                    openWatch = { onClose -> openDeploymentWatch(dispatcher, onClose) },
+                    onClose = dispatcher::dispatchClose,
                 )
 
             deploymentWatches += resilientWatch
@@ -112,7 +112,7 @@ class Fabric8K8sClient(
         }
 
     private fun openDeploymentWatch(
-        watcher: K8sWatcher<DeploymentInfo>,
+        dispatcher: OrderedWatchDispatcher<DeploymentInfo>,
         onClose: (Exception?) -> Unit,
     ): AutoCloseable {
         val fabric8Watcher =
@@ -131,13 +131,7 @@ class Fabric8K8sClient(
                         }
 
                     val deploymentInfo = mapToDeploymentInfo(resource)
-                    watchScope.launch {
-                        try {
-                            watcher.eventReceived(K8sWatchEvent(eventType, deploymentInfo))
-                        } catch (e: Exception) {
-                            logger.error(e) { "Error in watcher.eventReceived" }
-                        }
-                    }
+                    dispatcher.dispatch(K8sWatchEvent(eventType, deploymentInfo))
                 }
 
                 override fun onClose(cause: WatcherException?) {
@@ -150,17 +144,6 @@ class Fabric8K8sClient(
             .deployments()
             .inAnyNamespace()
             .watch(fabric8Watcher)
-    }
-
-    private suspend fun notifyWatchClosed(
-        watcher: K8sWatcher<DeploymentInfo>,
-        cause: Exception?,
-    ) {
-        try {
-            watcher.onClose(cause)
-        } catch (e: Exception) {
-            logger.error(e) { "Error in watcher.onClose" }
-        }
     }
 
     override suspend fun recordDeploymentEvent(
