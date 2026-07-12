@@ -3,6 +3,9 @@ package com.watchcluster.util
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 
@@ -55,4 +58,44 @@ class CronTickerTest {
             ticker.parseCron("* * * *")
         }
     }
+
+    @Test
+    fun `never fires early or repeats the same cron boundary`() =
+        runBlocking {
+            var now =
+                ZonedDateTime.of(
+                    2026,
+                    7,
+                    12,
+                    18,
+                    53,
+                    59,
+                    500_000,
+                    ZoneId.of("Asia/Seoul"),
+                )
+            val sleepDurations = mutableListOf<Long>()
+            val deterministicTicker =
+                CronUtilsTicker(
+                    nowProvider = { now },
+                    sleeper = { millis ->
+                        sleepDurations += millis
+                        now = now.plusNanos(millis * 1_000_000)
+                    },
+                )
+
+            deterministicTicker.awaitNextExecution("* * * * *")
+            val firstExecution = now
+            deterministicTicker.awaitNextExecution("* * * * *")
+            val secondExecution = now
+
+            assertEquals(
+                ZonedDateTime.of(2026, 7, 12, 18, 54, 0, 500_000, ZoneId.of("Asia/Seoul")),
+                firstExecution,
+            )
+            assertEquals(
+                ZonedDateTime.of(2026, 7, 12, 18, 55, 0, 500_000, ZoneId.of("Asia/Seoul")),
+                secondExecution,
+            )
+            assertEquals(listOf(1_000L, 60_000L), sleepDurations)
+        }
 }

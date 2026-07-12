@@ -27,7 +27,15 @@ interface CronTicker {
 
 private val whitespace = Regex("\\s+")
 
-class CronUtilsTicker : CronTicker {
+class CronUtilsTicker internal constructor(
+    private val nowProvider: () -> ZonedDateTime,
+    private val sleeper: suspend (Long) -> Unit,
+) : CronTicker {
+    constructor() : this(
+        nowProvider = ZonedDateTime::now,
+        sleeper = { millis -> delay(millis) },
+    )
+
     private val unixCronParser = CronParser(CronDefinitionBuilder.instanceDefinitionFor(CronType.UNIX))
     private val quartzCronParser = CronParser(CronDefinitionBuilder.instanceDefinitionFor(CronType.QUARTZ))
 
@@ -38,7 +46,7 @@ class CronUtilsTicker : CronTicker {
                     throw IllegalArgumentException("Invalid cron expression: $cronExpression", e)
                 }
 
-        val now = ZonedDateTime.now()
+        val now = nowProvider()
         val nextExecution =
             ExecutionTime
                 .forCron(cron)
@@ -47,10 +55,17 @@ class CronUtilsTicker : CronTicker {
                     IllegalArgumentException("No next execution time for cron expression: $cronExpression")
                 }
 
-        val delayMillis = Duration.between(now, nextExecution).toMillis()
-        // Guard against busy-spinning when the next execution rounds down to
-        // "now"; legitimate sub-second delays are preserved as-is.
-        delay(if (delayMillis > 0) delayMillis else MIN_DELAY_MILLIS)
+        waitUntil(nextExecution)
+    }
+
+    private suspend fun waitUntil(target: ZonedDateTime) {
+        while (true) {
+            val now = nowProvider()
+            if (!now.isBefore(target)) return
+
+            val remaining = Duration.between(now, target)
+            sleeper(remaining.toCeilingMillis())
+        }
     }
 
     /**
@@ -72,8 +87,9 @@ class CronUtilsTicker : CronTicker {
             )
         }
     }
+}
 
-    private companion object {
-        const val MIN_DELAY_MILLIS = 1_000L
-    }
+private fun Duration.toCeilingMillis(): Long {
+    val truncatedMillis = toMillis()
+    return if (minusMillis(truncatedMillis).isZero) truncatedMillis else truncatedMillis + 1
 }
