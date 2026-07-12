@@ -61,7 +61,7 @@ class GHCRStrategy : RegistryStrategy {
         withContext(Dispatchers.IO) {
             runCatching {
                 // Use skopeo to get image digest directly from GHCR
-                val imageRef = "docker://ghcr.io/$repository:$tag"
+                val imageRef = buildImageReference(repository, tag)
                 logger.debug { "Using skopeo to get digest for: $imageRef" }
 
                 val command = mutableListOf("skopeo", "inspect", imageRef)
@@ -94,4 +94,12 @@ class GHCRStrategy : RegistryStrategy {
                 null
             }
         }
+
+    internal fun buildImageReference(
+        repository: String,
+        reference: String,
+    ): String {
+        val separator = if (reference.startsWith("sha256:")) "@" else ":"
+        return "docker://ghcr.io/$repository$separator$reference"
+    }
 }
