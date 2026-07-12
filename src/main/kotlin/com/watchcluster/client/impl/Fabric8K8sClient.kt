@@ -25,11 +25,13 @@ import io.fabric8.kubernetes.client.WatcherException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withContext
 import mu.KotlinLogging
 import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 
 private val logger = KotlinLogging.logger {}
 
@@ -38,6 +40,7 @@ class Fabric8K8sClient(
 ) : K8sClient {
     private val watchScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val deploymentWatches = CopyOnWriteArrayList<ResilientWatch>()
+    private val closed = AtomicBoolean(false)
 
     override suspend fun getDeployment(
         namespace: String,
@@ -97,6 +100,7 @@ class Fabric8K8sClient(
 
     override suspend fun watchDeployments(watcher: K8sWatcher<DeploymentInfo>): Unit =
         withContext(Dispatchers.IO) {
+            check(!closed.get()) { "Kubernetes client is closed" }
             val dispatcher = OrderedWatchDispatcher(watchScope, watcher)
             val resilientWatch =
                 ResilientWatch(
@@ -108,8 +112,28 @@ class Fabric8K8sClient(
                 )
 
             deploymentWatches += resilientWatch
-            resilientWatch.start()
+            if (closed.get()) {
+                deploymentWatches -= resilientWatch
+                resilientWatch.stop()
+                error("Kubernetes client is closed")
+            }
+
+            try {
+                resilientWatch.start()
+            } catch (e: Exception) {
+                deploymentWatches -= resilientWatch
+                throw e
+            }
         }
+
+    override fun close() {
+        if (!closed.compareAndSet(false, true)) return
+
+        deploymentWatches.forEach(ResilientWatch::stop)
+        deploymentWatches.clear()
+        watchScope.cancel()
+        kubernetesClient.close()
+    }
 
     private fun openDeploymentWatch(
         dispatcher: OrderedWatchDispatcher<DeploymentInfo>,

@@ -23,6 +23,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import mu.KotlinLogging
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 private val logger = KotlinLogging.logger {}
 
@@ -47,6 +48,7 @@ class WatchController(
     private val cronTicker = cronTicker ?: CronUtilsTicker()
     internal val workers = ConcurrentHashMap<String, DeploymentWorker>()
     private var reconcileJob: Job? = null
+    private val stopRequested = AtomicBoolean(false)
 
     suspend fun start() {
         logger.info { "Starting deployment watcher..." }
@@ -94,8 +96,20 @@ class WatchController(
     }
 
     fun stop() {
+        stopRequested.set(true)
         reconcileJob?.cancel()
         workers.values.forEach { it.stop() }
+    }
+
+    suspend fun stopAndJoin() {
+        stop()
+        reconcileJob?.join()
+
+        do {
+            val terminatingWorkers = workers.values.toList()
+            terminatingWorkers.forEach { it.stop() }
+            terminatingWorkers.forEach { it.awaitTermination() }
+        } while (workers.isNotEmpty())
     }
 
     internal suspend fun reconcileDeployments() {
@@ -125,6 +139,8 @@ class WatchController(
     }
 
     private suspend fun handleDeployment(deployment: DeploymentInfo) {
+        if (stopRequested.get()) return
+
         val annotations = deployment.annotations
         val enabled = annotations[WatchClusterAnnotations.ENABLED]?.toBoolean() ?: false
         val checkNowRequested = annotations.containsKey(WatchClusterAnnotations.CHECK_NOW)
@@ -156,7 +172,7 @@ class WatchController(
             )
 
         while (true) {
-            val worker = obtainWorker(key, spec)
+            val worker = obtainWorker(key, spec) ?: return
             var delivered = worker.send(WorkerCommand.SpecChanged(spec))
             if (delivered && checkNowRequested) {
                 delivered = worker.send(WorkerCommand.ManualCheck)
@@ -176,8 +192,10 @@ class WatchController(
     private fun obtainWorker(
         key: String,
         initialSpec: WatchedDeployment,
-    ): DeploymentWorker {
+    ): DeploymentWorker? {
         while (true) {
+            if (stopRequested.get()) return null
+
             val existing = workers[key]
             if (existing != null && !existing.isStopRequested) return existing
 
@@ -204,6 +222,10 @@ class WatchController(
 
             if (installed) {
                 replacement.start()
+                if (stopRequested.get()) {
+                    replacement.stop()
+                    return null
+                }
                 return replacement
             }
         }

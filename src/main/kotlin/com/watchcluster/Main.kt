@@ -6,6 +6,7 @@ import com.watchcluster.model.WebhookConfig
 import io.fabric8.kubernetes.client.KubernetesClientBuilder
 import kotlinx.coroutines.runBlocking
 import mu.KotlinLogging
+import java.util.concurrent.atomic.AtomicBoolean
 
 private val logger = KotlinLogging.logger {}
 
@@ -66,10 +67,36 @@ fun main(): Unit =
             logger.info { "==================================" }
 
             val controller = WatchController(k8sClient)
-            controller.start()
+            val shutdownStarted = AtomicBoolean(false)
+            val shutdown: suspend () -> Unit = {
+                if (shutdownStarted.compareAndSet(false, true)) {
+                    logger.info { "Stopping watch-cluster..." }
+                    controller.stopAndJoin()
+                    k8sClient.close()
+                }
+            }
+            val shutdownHook =
+                Thread(
+                    {
+                        runBlocking { shutdown() }
+                    },
+                    "watch-cluster-shutdown",
+                )
+            var hookRegistered = false
 
-            // main thread가 종료되지 않도록 block
-            Thread.currentThread().join()
+            try {
+                controller.start()
+                Runtime.getRuntime().addShutdownHook(shutdownHook)
+                hookRegistered = true
+
+                // main thread가 종료되지 않도록 block
+                Thread.currentThread().join()
+            } finally {
+                shutdown()
+                if (hookRegistered) {
+                    runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
+                }
+            }
         }.onFailure { e ->
             logger.error(e) { "Failed to start watch-cluster" }
             throw e

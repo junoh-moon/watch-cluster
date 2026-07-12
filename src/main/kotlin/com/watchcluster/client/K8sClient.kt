@@ -6,7 +6,9 @@ import com.watchcluster.client.domain.PodInfo
 import com.watchcluster.client.domain.SecretInfo
 import com.watchcluster.model.ImagePlatform
 
-interface K8sClient {
+interface K8sClient : AutoCloseable {
+    override fun close() = Unit
+
     // Deployment operations
     suspend fun getDeployment(
         namespace: String,

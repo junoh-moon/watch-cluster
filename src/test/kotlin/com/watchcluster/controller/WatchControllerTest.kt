@@ -24,7 +24,9 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.slot
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.TestScope
@@ -955,6 +957,51 @@ class WatchControllerTest {
                     any(),
                 )
             }
+            assertTrue(controller.workers.isEmpty())
+        }
+
+    @Test
+    fun `stopAndJoin waits for an in-flight check`() =
+        runTest {
+            val checkStarted = CompletableDeferred<Unit>()
+            val releaseCheck = CompletableDeferred<Unit>()
+            val mockImageChecker = mockk<ImageChecker>()
+            val ticker = ManualCronTicker()
+            coEvery {
+                mockImageChecker.checkForUpdateOutcome(any(), any(), any(), any(), any())
+            } coAnswers {
+                checkStarted.complete(Unit)
+                releaseCheck.await()
+                ImageCheckOutcome.UpToDate(
+                    ImageUpdateResult(
+                        currentImage = "nginx:1.20.0",
+                        newImage = null,
+                        reason = "Already at latest version",
+                    ),
+                )
+            }
+            val controller = createController(cronTicker = ticker, imageChecker = mockImageChecker)
+            val watcher = startAndCaptureWatcher(controller)
+            val deployment =
+                createMockDeployment(
+                    namespace = "test-ns",
+                    name = "test-app",
+                    image = "nginx:1.20.0",
+                    annotations = mapOf(WatchClusterAnnotations.ENABLED to "true"),
+                )
+
+            watcher.eventReceived(K8sWatchEvent(EventType.ADDED, deployment))
+            runCurrent()
+            ticker.fire()
+            checkStarted.await()
+
+            val stop = backgroundScope.async { controller.stopAndJoin() }
+            runCurrent()
+            assertFalse(stop.isCompleted)
+
+            releaseCheck.complete(Unit)
+            stop.await()
+
             assertTrue(controller.workers.isEmpty())
         }
 
