@@ -16,13 +16,16 @@ import com.watchcluster.model.WebhookEventType
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class DeploymentUpdaterTest {
     private lateinit var mockK8sClient: K8sClient
     private lateinit var mockWebhookService: WebhookService
@@ -171,10 +174,17 @@ class DeploymentUpdaterTest {
 
             coEvery { mockK8sClient.getDeployment(namespace, name) } returns null
 
-            // When/Then
-            assertFailsWith<IllegalStateException> {
-                deploymentUpdater.updateDeployment(namespace, name, newImage, "nginx:1.20.0", UpdateStrategy.Version())
-            }
+            val outcome =
+                deploymentUpdater.updateDeployment(
+                    namespace,
+                    name,
+                    newImage,
+                    "nginx:1.20.0",
+                    UpdateStrategy.Version(),
+                )
+
+            assertIs<DeploymentUpdateOutcome.PatchFailed>(outcome)
+            assertEquals(newImage, outcome.desiredImage)
 
             // IMAGE_ROLLOUT_STARTED is not sent because getDeployment fails first
             coVerify(exactly = 0) {
@@ -286,10 +296,16 @@ class DeploymentUpdaterTest {
 
             coEvery { mockK8sClient.getDeployment(namespace, name) } returns deployment
 
-            // When/Then
-            assertFailsWith<IllegalStateException> {
-                deploymentUpdater.updateDeployment(namespace, name, newImage, "nginx:1.20.0", UpdateStrategy.Version())
-            }
+            val outcome =
+                deploymentUpdater.updateDeployment(
+                    namespace,
+                    name,
+                    newImage,
+                    "nginx:1.20.0",
+                    UpdateStrategy.Version(),
+                )
+
+            assertIs<DeploymentUpdateOutcome.PatchFailed>(outcome)
 
             coVerify {
                 mockWebhookService.sendWebhook(
@@ -525,5 +541,93 @@ class DeploymentUpdaterTest {
                     },
                 )
             }
+        }
+
+    @Test
+    fun `reports patch applied when rollout times out`() =
+        runTest {
+            val namespace = "test-namespace"
+            val name = "test-deployment"
+            val currentImage = "nginx:1.20.0"
+            val newImage = "nginx:1.21.0"
+            val deployment =
+                com.watchcluster.client.domain.DeploymentInfo(
+                    namespace = namespace,
+                    name = name,
+                    generation = 2,
+                    replicas = 1,
+                    selector = mapOf("app" to name),
+                    containers = listOf(ContainerInfo("nginx", currentImage)),
+                    imagePullSecrets = emptyList(),
+                    annotations = emptyMap(),
+                    status = DeploymentStatus(observedGeneration = 1),
+                )
+            val updater =
+                DeploymentUpdater(
+                    mockK8sClient,
+                    mockWebhookService,
+                    rolloutTimeoutMs = 100L,
+                    rolloutPollIntervalMs = 10L,
+                )
+
+            coEvery { mockK8sClient.getDeployment(namespace, name) } returns deployment
+            coEvery { mockK8sClient.patchDeployment(namespace, name, any()) } returns
+                deployment.copy(containers = listOf(ContainerInfo("nginx", newImage)))
+
+            val outcome =
+                updater.updateDeployment(
+                    namespace,
+                    name,
+                    newImage,
+                    currentImage,
+                    UpdateStrategy.Version(),
+                )
+
+            assertTrue(outcome is DeploymentUpdateOutcome.PatchAppliedButIncomplete)
+            assertEquals(newImage, outcome.desiredImage)
+            coVerify(exactly = 1) {
+                mockWebhookService.sendWebhook(match { it.eventType == WebhookEventType.IMAGE_ROLLOUT_FAILED })
+            }
+        }
+
+    @Test
+    fun `verifies rollout when desired image is already patched`() =
+        runTest {
+            val namespace = "test-namespace"
+            val name = "test-deployment"
+            val newImage = "nginx:1.21.0"
+            val deployment =
+                com.watchcluster.client.domain.DeploymentInfo(
+                    namespace = namespace,
+                    name = name,
+                    generation = 2,
+                    replicas = 1,
+                    selector = mapOf("app" to name),
+                    containers = listOf(ContainerInfo("nginx", newImage)),
+                    imagePullSecrets = emptyList(),
+                    annotations = emptyMap(),
+                    status = DeploymentStatus(observedGeneration = 1),
+                )
+            val updater =
+                DeploymentUpdater(
+                    mockK8sClient,
+                    mockWebhookService,
+                    rolloutTimeoutMs = 100L,
+                    rolloutPollIntervalMs = 10L,
+                )
+
+            coEvery { mockK8sClient.getDeployment(namespace, name) } returns deployment
+
+            val outcome =
+                updater.updateDeployment(
+                    namespace,
+                    name,
+                    newImage,
+                    "nginx:1.20.0",
+                    UpdateStrategy.Version(),
+                )
+
+            assertIs<DeploymentUpdateOutcome.PatchAppliedButIncomplete>(outcome)
+            coVerify(exactly = 0) { mockK8sClient.patchDeployment(any(), any(), any()) }
         }
 }

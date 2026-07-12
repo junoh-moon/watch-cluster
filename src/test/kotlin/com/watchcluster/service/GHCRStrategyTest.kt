@@ -1,7 +1,9 @@
 package com.watchcluster.service
 
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class GHCRStrategyTest {
     private val strategy = GHCRStrategy()
@@ -21,4 +23,24 @@ class GHCRStrategyTest {
             strategy.buildImageReference("immich-app/immich-machine-learning", "sha256:abc123"),
         )
     }
+
+    @Test
+    fun `propagates skopeo failures`() =
+        runBlocking {
+            val failingStrategy =
+                GHCRStrategy(
+                    commandRunner = {
+                        SkopeoCommandResult(
+                            exitCode = 1,
+                            stdout = "",
+                            stderr = "authentication required",
+                        )
+                    },
+                )
+
+            assertFailsWith<IllegalStateException> {
+                failingStrategy.getTags("private/repository", null)
+            }
+            Unit
+        }
 }

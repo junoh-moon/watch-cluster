@@ -7,7 +7,9 @@ import com.watchcluster.model.WatchClusterAnnotations
 import com.watchcluster.model.WatchedDeployment
 import com.watchcluster.model.WebhookEvent
 import com.watchcluster.model.WebhookEventType
+import com.watchcluster.service.DeploymentUpdateOutcome
 import com.watchcluster.service.DeploymentUpdater
+import com.watchcluster.service.ImageCheckOutcome
 import com.watchcluster.service.ImageChecker
 import com.watchcluster.service.WebhookService
 import com.watchcluster.util.CronTicker
@@ -28,6 +30,7 @@ internal enum class DeploymentCheckStatus {
     UPDATED,
     NO_UPDATE,
     FAILED,
+    ROLLOUT_INCOMPLETE,
     SKIPPED,
 }
 
@@ -253,60 +256,99 @@ internal class DeploymentWorker(
             logger.info { "Current image: ${deployment.currentImage}" }
             logger.info { "Checking for updates: ${deployment.namespace}/${deployment.name}" }
 
-            val updateResult =
-                imageChecker.checkForUpdate(
-                    deployment.currentImage,
-                    deployment.updateStrategy,
-                    deployment.namespace,
-                    deployment.imagePullSecrets,
-                    deployment.name,
-                )
-
-            when {
-                // Has update
-                updateResult.newImage != null -> {
-                    logger.info {
-                        buildString {
-                            append("Found update for ${deployment.namespace}/${deployment.name}: ${updateResult.newImage}")
-                            updateResult.reason?.let { append(" $it") }
-                        }
-                    }
-                    deploymentUpdater.updateDeployment(
-                        deployment.namespace,
-                        deployment.name,
-                        updateResult.newImage,
-                        updateResult.currentImage,
+            when (
+                val outcome =
+                    imageChecker.checkForUpdateOutcome(
+                        deployment.currentImage,
                         deployment.updateStrategy,
-                        updateResult.newDigest,
+                        deployment.namespace,
+                        deployment.imagePullSecrets,
+                        deployment.name,
                     )
-
-                    // Update the owned spec so the next check sees the new image.
-                    spec = spec.copy(currentImage = updateResult.newImage)
-
+            ) {
+                is ImageCheckOutcome.UpdateAvailable -> updateDeployment(deployment, outcome)
+                is ImageCheckOutcome.UpToDate -> noUpdateResult(deployment, outcome)
+                is ImageCheckOutcome.Failed ->
                     DeploymentCheckResult(
-                        DeploymentCheckStatus.UPDATED,
-                        "Updated ${deployment.namespace}/${deployment.name} to ${updateResult.newImage}",
+                        DeploymentCheckStatus.FAILED,
+                        "Error checking deployment ${deployment.namespace}/${deployment.name}: ${outcome.message}",
                     )
-                }
-
-                else -> {
-                    val message =
-                        updateResult.reason
-                            ?: "No update available for ${deployment.namespace}/${deployment.name}"
-                    logger.debug {
-                        buildString {
-                            append("No update available for ${deployment.namespace}/${deployment.name}.")
-                            updateResult.reason?.let { append(" $it") }
-                        }
-                    }
-                    DeploymentCheckResult(DeploymentCheckStatus.NO_UPDATE, message)
-                }
             }
         }.getOrElse { e ->
+            if (e is CancellationException) throw e
+
             val message = "Error checking deployment ${deployment.namespace}/${deployment.name}: ${e.message ?: "unknown error"}"
             logger.error(e) { "Error checking deployment ${deployment.namespace}/${deployment.name}" }
             DeploymentCheckResult(DeploymentCheckStatus.FAILED, message)
         }
+    }
+
+    private suspend fun updateDeployment(
+        deployment: WatchedDeployment,
+        outcome: ImageCheckOutcome.UpdateAvailable,
+    ): DeploymentCheckResult {
+        val updateResult = outcome.result
+        val newImage = requireNotNull(updateResult.newImage)
+
+        logger.info {
+            buildString {
+                append("Found update for ${deployment.namespace}/${deployment.name}: $newImage")
+                updateResult.reason?.let { append(" $it") }
+            }
+        }
+        val deploymentOutcome =
+            deploymentUpdater.updateDeployment(
+                deployment.namespace,
+                deployment.name,
+                newImage,
+                updateResult.currentImage,
+                deployment.updateStrategy,
+                updateResult.newDigest,
+            )
+
+        return when (deploymentOutcome) {
+            is DeploymentUpdateOutcome.PatchAppliedAndCompleted -> {
+                spec = spec.copy(currentImage = deploymentOutcome.desiredImage)
+                DeploymentCheckResult(
+                    DeploymentCheckStatus.UPDATED,
+                    "Updated ${deployment.namespace}/${deployment.name} to ${deploymentOutcome.desiredImage}",
+                )
+            }
+
+            is DeploymentUpdateOutcome.PatchAppliedButIncomplete -> {
+                // Patch application changes the Kubernetes desired state even
+                // when rollout observation does not complete.
+                spec = spec.copy(currentImage = deploymentOutcome.desiredImage)
+                DeploymentCheckResult(
+                    DeploymentCheckStatus.ROLLOUT_INCOMPLETE,
+                    "Updated desired image for ${deployment.namespace}/${deployment.name} to ${deploymentOutcome.desiredImage}, " +
+                        "but rollout did not complete: ${deploymentOutcome.reason}",
+                )
+            }
+
+            is DeploymentUpdateOutcome.PatchFailed ->
+                DeploymentCheckResult(
+                    DeploymentCheckStatus.FAILED,
+                    "Failed to patch ${deployment.namespace}/${deployment.name}: ${deploymentOutcome.reason}",
+                )
+        }
+    }
+
+    private fun noUpdateResult(
+        deployment: WatchedDeployment,
+        outcome: ImageCheckOutcome.UpToDate,
+    ): DeploymentCheckResult {
+        val updateResult = outcome.result
+        val message =
+            updateResult.reason
+                ?: "No update available for ${deployment.namespace}/${deployment.name}"
+        logger.debug {
+            buildString {
+                append("No update available for ${deployment.namespace}/${deployment.name}.")
+                updateResult.reason?.let { append(" $it") }
+            }
+        }
+        return DeploymentCheckResult(DeploymentCheckStatus.NO_UPDATE, message)
     }
 
     private suspend fun performManualCheck() {
@@ -365,6 +407,7 @@ internal class DeploymentWorker(
                 DeploymentCheckStatus.UPDATED -> "ManualCheckUpdated" to "Normal"
                 DeploymentCheckStatus.NO_UPDATE -> "ManualCheckNoUpdate" to "Normal"
                 DeploymentCheckStatus.FAILED -> "ManualCheckFailed" to "Warning"
+                DeploymentCheckStatus.ROLLOUT_INCOMPLETE -> "ManualCheckRolloutIncomplete" to "Warning"
                 DeploymentCheckStatus.SKIPPED -> "ManualCheckSkipped" to "Warning"
             }
 

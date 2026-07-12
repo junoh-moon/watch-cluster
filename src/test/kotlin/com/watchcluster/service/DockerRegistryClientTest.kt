@@ -18,6 +18,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class DockerRegistryClientTest {
@@ -141,11 +142,31 @@ class DockerRegistryClientTest {
             every { mockClient.newCall(any()) } returns mockCall
             coEvery { mockCall.await() } returns response
 
-            // When
-            val tags = registryClient.getTags(null, repository)
+            assertFailsWith<IllegalStateException> {
+                registryClient.getTags(null, repository)
+            }
+            Unit
+        }
 
-            // Then
-            assertTrue(tags.isEmpty())
+    @Test
+    fun `test generic getTags propagates API errors`() =
+        runBlocking {
+            val response =
+                Response
+                    .Builder()
+                    .request(Request.Builder().url("http://test").build())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(401)
+                    .message("Unauthorized")
+                    .body("Unauthorized".toResponseBody("text/plain".toMediaType()))
+                    .build()
+            every { mockClient.newCall(any()) } returns mockCall
+            coEvery { mockCall.await() } returns response
+
+            assertFailsWith<IllegalStateException> {
+                registryClient.getTags("registry.example.com", "private/image")
+            }
+            Unit
         }
 
     @Test
@@ -180,6 +201,27 @@ class DockerRegistryClientTest {
 
             // Then
             assertEquals(expectedDigest, digest)
+        }
+
+    @Test
+    fun `test getImageDigest propagates API errors`() =
+        runBlocking {
+            val response =
+                Response
+                    .Builder()
+                    .request(Request.Builder().url("http://test").build())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(503)
+                    .message("Service Unavailable")
+                    .body("Unavailable".toResponseBody("text/plain".toMediaType()))
+                    .build()
+            every { mockClient.newCall(any()) } returns mockCall
+            coEvery { mockCall.await() } returns response
+
+            assertFailsWith<IllegalStateException> {
+                registryClient.getImageDigest(null, "nginx", "latest")
+            }
+            Unit
         }
 
     @Test

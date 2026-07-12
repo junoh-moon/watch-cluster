@@ -27,6 +27,7 @@ import org.junit.jupiter.params.provider.MethodSource
 import java.util.Base64
 import java.util.stream.Stream
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -95,6 +96,41 @@ class ImageCheckerTest {
             set(imageChecker, mockRegistryClient)
         }
     }
+
+    @Test
+    fun `reports registry lookup exceptions as failed outcomes`() =
+        runBlocking {
+            coEvery { mockRegistryClient.getTags(null, "myapp", null) } throws Exception("Registry unavailable")
+
+            val outcome =
+                imageChecker.checkForUpdateOutcome(
+                    currentImage = "myapp:v1.0.0",
+                    strategy = UpdateStrategy.Version(),
+                    namespace = "default",
+                    imagePullSecrets = null,
+                )
+
+            assertIs<ImageCheckOutcome.Failed>(outcome)
+            assertTrue(outcome.message.contains("Registry unavailable"))
+        }
+
+    @Test
+    fun `reports digest lookup exceptions as failed outcomes`() =
+        runBlocking {
+            coEvery { mockRegistryClient.getImageDigest(null, "myapp", "latest", null) } throws
+                Exception("Digest registry unavailable")
+
+            val outcome =
+                imageChecker.checkForUpdateOutcome(
+                    currentImage = "myapp:latest",
+                    strategy = UpdateStrategy.Latest,
+                    namespace = "default",
+                    imagePullSecrets = null,
+                )
+
+            assertIs<ImageCheckOutcome.Failed>(outcome)
+            assertTrue(outcome.message.contains("Digest registry unavailable"))
+        }
 
     @Test
     fun `test checkForUpdate with newer version available`() =
@@ -210,7 +246,7 @@ class ImageCheckerTest {
 
             // Then
             assertNull(result.newImage)
-            assertTrue(result.reason?.contains("Error checking digest") == true)
+            assertTrue(result.reason?.contains("Error") == true)
         }
 
     @Test
@@ -1160,7 +1196,7 @@ class ImageCheckerTest {
 
             // Then
             assertNull(result.newImage)
-            assertEquals("No newer version available", result.reason)
+            assertEquals("Error: Registry unavailable", result.reason)
         }
 
     @Test
@@ -1176,7 +1212,7 @@ class ImageCheckerTest {
 
             // Then
             assertNull(result.newImage)
-            assertTrue(result.reason?.contains("Error checking digest") == true)
+            assertTrue(result.reason?.contains("Error") == true)
         }
 
     @Test

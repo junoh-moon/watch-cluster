@@ -13,11 +13,31 @@ import com.watchcluster.model.WatchClusterAnnotations
 import com.watchcluster.model.WebhookEvent
 import com.watchcluster.model.WebhookEventType
 import com.watchcluster.util.ImageParser
+import kotlinx.coroutines.CancellationException
 import mu.KotlinLogging
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
 private val logger = KotlinLogging.logger {}
+
+sealed interface DeploymentUpdateOutcome {
+    val desiredImage: String
+
+    data class PatchAppliedAndCompleted(
+        override val desiredImage: String,
+    ) : DeploymentUpdateOutcome
+
+    data class PatchAppliedButIncomplete(
+        override val desiredImage: String,
+        val reason: String,
+    ) : DeploymentUpdateOutcome
+
+    data class PatchFailed(
+        override val desiredImage: String,
+        val reason: String,
+        val cause: Throwable,
+    ) : DeploymentUpdateOutcome
+}
 
 class DeploymentUpdater(
     private val k8sClient: K8sClient,
@@ -33,7 +53,7 @@ class DeploymentUpdater(
         previousImage: String,
         strategy: UpdateStrategy,
         expectedDigest: String? = null,
-    ) {
+    ): DeploymentUpdateOutcome =
         runCatching {
             // Fetch current deployment state first
             val deployment =
@@ -49,8 +69,8 @@ class DeploymentUpdater(
 
             // Latest strategy must always re-patch — rollout is triggered by annotation change, not image-string change.
             if (strategy !is UpdateStrategy.Latest && actualCurrentImage == newImageRef) {
-                logger.info { "Deployment $namespace/$name already at $newImageRef, skipping update" }
-                return
+                logger.info { "Deployment $namespace/$name already desires $newImageRef, verifying rollout" }
+                return@runCatching resolveRolloutOutcome(namespace, name, newImageRef, strategy, expectedDigest)
             }
 
             logger.info { "Updating deployment $namespace/$name with new image: $newImageRef" }
@@ -87,24 +107,51 @@ class DeploymentUpdater(
                     throw IllegalStateException("Patch operation returned null deployment")
                 }
 
-            waitForRollout(namespace, name, newImageRef, strategy, expectedDigest, PlatformCache())
-        }.onFailure { e ->
+            resolveRolloutOutcome(namespace, name, newImageRef, strategy, expectedDigest)
+        }.getOrElse { e ->
+            if (e is CancellationException) throw e
+
             logger.error(e) { "Failed to update deployment $namespace/$name" }
-
-            webhookService.sendWebhook(
-                WebhookEvent(
-                    eventType = WebhookEventType.IMAGE_ROLLOUT_FAILED,
-                    timestamp =
-                        java.time.Instant
-                            .now()
-                            .toString(),
-                    deployment = DeploymentEventData(namespace, name, newImageRef),
-                    details = mapOf("error" to (e.message ?: "Unknown error")),
-                ),
+            sendRolloutFailedWebhook(namespace, name, newImageRef, e.message ?: "Unknown error")
+            DeploymentUpdateOutcome.PatchFailed(
+                desiredImage = newImageRef,
+                reason = e.message ?: "Unknown error",
+                cause = e,
             )
-
-            throw e
         }
+
+    private suspend fun resolveRolloutOutcome(
+        namespace: String,
+        name: String,
+        desiredImage: String,
+        strategy: UpdateStrategy,
+        expectedDigest: String?,
+    ): DeploymentUpdateOutcome =
+        when (val rollout = waitForRollout(namespace, name, desiredImage, strategy, expectedDigest, PlatformCache())) {
+            RolloutWaitOutcome.Completed -> DeploymentUpdateOutcome.PatchAppliedAndCompleted(desiredImage)
+            is RolloutWaitOutcome.Incomplete -> {
+                sendRolloutFailedWebhook(namespace, name, desiredImage, rollout.reason)
+                DeploymentUpdateOutcome.PatchAppliedButIncomplete(desiredImage, rollout.reason)
+            }
+        }
+
+    private suspend fun sendRolloutFailedWebhook(
+        namespace: String,
+        name: String,
+        newImageRef: String,
+        error: String,
+    ) {
+        webhookService.sendWebhook(
+            WebhookEvent(
+                eventType = WebhookEventType.IMAGE_ROLLOUT_FAILED,
+                timestamp =
+                    java.time.Instant
+                        .now()
+                        .toString(),
+                deployment = DeploymentEventData(namespace, name, newImageRef),
+                details = mapOf("error" to error),
+            ),
+        )
     }
 
     private fun buildCombinedPatch(
@@ -154,6 +201,14 @@ class DeploymentUpdater(
         return objectMapper.writeValueAsString(patchData)
     }
 
+    private sealed interface RolloutWaitOutcome {
+        data object Completed : RolloutWaitOutcome
+
+        data class Incomplete(
+            val reason: String,
+        ) : RolloutWaitOutcome
+    }
+
     private suspend fun waitForRollout(
         namespace: String,
         name: String,
@@ -161,13 +216,15 @@ class DeploymentUpdater(
         strategy: UpdateStrategy,
         expectedDigest: String?,
         platformCache: PlatformCache,
-    ) {
-        runCatching {
+    ): RolloutWaitOutcome {
+        return try {
             logger.info { "Waiting for rollout to complete..." }
             val startTime = System.currentTimeMillis()
 
             while (System.currentTimeMillis() - startTime < rolloutTimeoutMs) {
-                val deployment = k8sClient.getDeployment(namespace, name) ?: return
+                val deployment =
+                    k8sClient.getDeployment(namespace, name)
+                        ?: return RolloutWaitOutcome.Incomplete("Deployment $namespace/$name disappeared during rollout")
                 val status = deployment.status
 
                 // Check if controller has observed the latest generation
@@ -220,7 +277,7 @@ class DeploymentUpdater(
                             ),
                         )
 
-                        return
+                        return RolloutWaitOutcome.Completed
                     } else {
                         logger.debug { "Waiting for all pods to update to new image" }
                     }
@@ -240,9 +297,14 @@ class DeploymentUpdater(
                 kotlinx.coroutines.delay(rolloutPollIntervalMs)
             }
 
-            logger.warn { "Rollout timeout after ${rolloutTimeoutMs / 1000} seconds" }
-        }.onFailure { e ->
+            val reason = "Rollout timeout after ${rolloutTimeoutMs / 1000} seconds"
+            logger.warn { reason }
+            RolloutWaitOutcome.Incomplete(reason)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
             logger.warn(e) { "Error waiting for rollout" }
+            RolloutWaitOutcome.Incomplete(e.message ?: "Error waiting for rollout")
         }
     }
 

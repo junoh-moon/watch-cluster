@@ -94,24 +94,19 @@ class DockerRegistryClient {
     ): List<String> =
         withContext(Dispatchers.IO) {
             logger.info { "Fetching tags for repository: $repository from registry: $registry" }
-            runCatching {
-                when {
-                    registry == null || registry == "docker.io" -> {
-                        logger.debug { "Using Docker Hub strategy for $repository" }
-                        getDockerHubTags(repository, dockerAuth)
-                    }
-                    registry.contains("ghcr.io") -> {
-                        logger.debug { "Using GitHub Container Registry strategy for $repository" }
-                        getGitHubContainerRegistryTags(repository, dockerAuth)
-                    }
-                    else -> {
-                        logger.debug { "Using generic registry strategy for $repository" }
-                        getGenericRegistryTags(registry, repository, dockerAuth)
-                    }
+            when {
+                registry == null || registry == "docker.io" -> {
+                    logger.debug { "Using Docker Hub strategy for $repository" }
+                    getDockerHubTags(repository, dockerAuth)
                 }
-            }.getOrElse { e ->
-                logger.error(e) { "Failed to fetch tags for $repository from $registry" }
-                emptyList()
+                registry.contains("ghcr.io") -> {
+                    logger.debug { "Using GitHub Container Registry strategy for $repository" }
+                    getGitHubContainerRegistryTags(repository, dockerAuth)
+                }
+                else -> {
+                    logger.debug { "Using generic registry strategy for $repository" }
+                    getGenericRegistryTags(registry, repository, dockerAuth)
+                }
             }
         }
 
@@ -124,28 +119,23 @@ class DockerRegistryClient {
     ): String? =
         withContext(Dispatchers.IO) {
             logger.debug { "Getting image digest for registry=$registry, repository=$repository, tag=$tag, platform=$platform" }
-            runCatching {
-                val digest =
-                    when {
-                        registry == null || registry == "docker.io" -> {
-                            logger.debug { "Using Docker Hub for digest lookup" }
-                            getDockerHubDigest(repository, tag, dockerAuth, platform)
-                        }
-                        registry.contains("ghcr.io") -> {
-                            logger.debug { "Using GitHub Container Registry for digest lookup" }
-                            getGitHubContainerRegistryDigest(repository, tag, dockerAuth)
-                        }
-                        else -> {
-                            logger.debug { "Using generic registry for digest lookup" }
-                            getGenericRegistryDigest(registry, repository, tag, dockerAuth, platform)
-                        }
+            val digest =
+                when {
+                    registry == null || registry == "docker.io" -> {
+                        logger.debug { "Using Docker Hub for digest lookup" }
+                        getDockerHubDigest(repository, tag, dockerAuth, platform)
                     }
-                logger.debug { "Retrieved digest: $digest" }
-                digest
-            }.getOrElse { e ->
-                logger.error(e) { "Failed to fetch digest for $repository:$tag from $registry" }
-                null
-            }
+                    registry.contains("ghcr.io") -> {
+                        logger.debug { "Using GitHub Container Registry for digest lookup" }
+                        getGitHubContainerRegistryDigest(repository, tag, dockerAuth)
+                    }
+                    else -> {
+                        logger.debug { "Using generic registry for digest lookup" }
+                        getGenericRegistryDigest(registry, repository, tag, dockerAuth, platform)
+                    }
+                }
+            logger.debug { "Retrieved digest: $digest" }
+            digest
         }
 
     private suspend fun getDockerHubTags(
@@ -169,8 +159,7 @@ class DockerRegistryClient {
 
         client.newCall(request).await().use { response ->
             if (!response.isSuccessful) {
-                logger.warn { "Failed to fetch tags from Docker Hub: ${response.code}" }
-                return emptyList()
+                throw IllegalStateException("Failed to fetch tags from Docker Hub: ${response.code}")
             }
 
             val body = response.body?.string() ?: return emptyList()
@@ -208,8 +197,7 @@ class DockerRegistryClient {
 
         client.newCall(request).await().use { response ->
             if (!response.isSuccessful) {
-                logger.warn { "Failed to fetch tags from $registry: ${response.code}" }
-                return emptyList()
+                throw IllegalStateException("Failed to fetch tags from $registry: ${response.code}")
             }
 
             val body = response.body?.string() ?: return emptyList()
@@ -248,8 +236,7 @@ class DockerRegistryClient {
         client.newCall(request).await().use { response ->
             logger.debug { "Docker Hub response code: ${response.code}" }
             if (!response.isSuccessful) {
-                logger.warn { "Failed to fetch digest from Docker Hub: ${response.code}" }
-                return null
+                throw IllegalStateException("Failed to fetch digest from Docker Hub: ${response.code}")
             }
 
             val body = response.body?.string() ?: return null
@@ -378,8 +365,7 @@ class DockerRegistryClient {
         client.newCall(request).await().use { response ->
             logger.debug { "Generic registry response code: ${response.code}" }
             if (!response.isSuccessful) {
-                logger.warn { "Failed to fetch manifest from $registry: ${response.code}" }
-                return null
+                throw IllegalStateException("Failed to fetch manifest from $registry: ${response.code}")
             }
 
             // Docker-Content-Digest header contains the digest
@@ -421,8 +407,7 @@ class DockerRegistryClient {
         client.newCall(requestBuilder.build()).await().use { response ->
             logger.debug { "Registry platform digest response code: ${response.code}" }
             if (!response.isSuccessful) {
-                logger.warn { "Failed to fetch manifest from $registry: ${response.code}" }
-                return null
+                throw IllegalStateException("Failed to fetch manifest from $registry: ${response.code}")
             }
 
             val digest = response.header("Docker-Content-Digest")

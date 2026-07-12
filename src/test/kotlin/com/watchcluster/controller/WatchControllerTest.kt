@@ -12,7 +12,9 @@ import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.model.WatchClusterAnnotations
 import com.watchcluster.model.WatchedDeployment
 import com.watchcluster.model.WebhookConfig
+import com.watchcluster.service.DeploymentUpdateOutcome
 import com.watchcluster.service.DeploymentUpdater
+import com.watchcluster.service.ImageCheckOutcome
 import com.watchcluster.service.ImageChecker
 import com.watchcluster.util.CronTicker
 import com.watchcluster.util.CronUtilsTicker
@@ -340,7 +342,7 @@ class WatchControllerTest {
             } returns deployment.copy(annotations = deployment.annotations - WatchClusterAnnotations.CHECK_NOW)
             coEvery { mockK8sClient.recordDeploymentEvent(any(), any(), any(), any(), any()) } returns Unit
             coEvery {
-                mockImageChecker.checkForUpdate(
+                mockImageChecker.checkForUpdateOutcome(
                     "nginx:1.20.0",
                     any(),
                     "test-ns",
@@ -348,10 +350,12 @@ class WatchControllerTest {
                     "test-app",
                 )
             } returns
-                ImageUpdateResult(
-                    currentImage = "nginx:1.20.0",
-                    newImage = null,
-                    reason = "No newer version available",
+                ImageCheckOutcome.UpToDate(
+                    ImageUpdateResult(
+                        currentImage = "nginx:1.20.0",
+                        newImage = null,
+                        reason = "No newer version available",
+                    ),
                 )
 
             val controller =
@@ -372,7 +376,7 @@ class WatchControllerTest {
                 )
             }
             coVerify(exactly = 1) {
-                mockImageChecker.checkForUpdate(
+                mockImageChecker.checkForUpdateOutcome(
                     "nginx:1.20.0",
                     any(),
                     "test-ns",
@@ -404,6 +408,62 @@ class WatchControllerTest {
         }
 
     @Test
+    fun `manual check records registry failures instead of no update`() =
+        runTest {
+            val mockImageChecker = mockk<ImageChecker>()
+            val mockDeploymentUpdater = mockk<DeploymentUpdater>(relaxed = true)
+            val deployment =
+                createMockDeployment(
+                    namespace = "test-ns",
+                    name = "test-app",
+                    image = "nginx:1.20.0",
+                    annotations =
+                        mapOf(
+                            WatchClusterAnnotations.ENABLED to "true",
+                            WatchClusterAnnotations.CHECK_NOW to "true",
+                        ),
+                )
+            coEvery { mockK8sClient.patchDeployment("test-ns", "test-app", any()) } returns
+                deployment.copy(annotations = deployment.annotations - WatchClusterAnnotations.CHECK_NOW)
+            coEvery {
+                mockImageChecker.checkForUpdateOutcome(any(), any(), any(), any(), any())
+            } returns
+                ImageCheckOutcome.Failed(
+                    currentImage = "nginx:1.20.0",
+                    message = "Registry unavailable",
+                    cause = IllegalStateException("Registry unavailable"),
+                )
+
+            val controller = createController(imageChecker = mockImageChecker, deploymentUpdater = mockDeploymentUpdater)
+            val watcher = startAndCaptureWatcher(controller)
+
+            watcher.eventReceived(K8sWatchEvent(EventType.MODIFIED, deployment))
+            runCurrent()
+
+            coVerify(exactly = 1) {
+                mockImageChecker.checkForUpdateOutcome(any(), any(), any(), any(), any())
+            }
+            coVerify(exactly = 1) {
+                mockK8sClient.recordDeploymentEvent(
+                    "test-ns",
+                    "test-app",
+                    "ManualCheckFailed",
+                    match { it.contains("Registry unavailable") },
+                    "Warning",
+                )
+            }
+            coVerify(exactly = 0) {
+                mockK8sClient.recordDeploymentEvent(
+                    any(),
+                    any(),
+                    "ManualCheckNoUpdate",
+                    any(),
+                    any(),
+                )
+            }
+        }
+
+    @Test
     fun `redelivered check-now requests coalesce into a single manual check`() =
         runTest {
             val mockImageChecker = mockk<ImageChecker>()
@@ -425,12 +485,14 @@ class WatchControllerTest {
                 mockK8sClient.patchDeployment("test-ns", "test-app", any())
             } returns deployment.copy(annotations = deployment.annotations - WatchClusterAnnotations.CHECK_NOW)
             coEvery {
-                mockImageChecker.checkForUpdate(any(), any(), any(), any(), any())
+                mockImageChecker.checkForUpdateOutcome(any(), any(), any(), any(), any())
             } returns
-                ImageUpdateResult(
-                    currentImage = "nginx:1.20.0",
-                    newImage = null,
-                    reason = "No newer version available",
+                ImageCheckOutcome.UpToDate(
+                    ImageUpdateResult(
+                        currentImage = "nginx:1.20.0",
+                        newImage = null,
+                        reason = "No newer version available",
+                    ),
                 )
 
             val controller =
@@ -447,7 +509,7 @@ class WatchControllerTest {
             runCurrent()
 
             coVerify(exactly = 1) {
-                mockImageChecker.checkForUpdate(any(), any(), any(), any(), any())
+                mockImageChecker.checkForUpdateOutcome(any(), any(), any(), any(), any())
             }
         }
 
@@ -473,14 +535,16 @@ class WatchControllerTest {
                 mockK8sClient.patchDeployment("test-ns", "test-app", any())
             } returns deployment.copy(annotations = deployment.annotations - WatchClusterAnnotations.CHECK_NOW)
             coEvery {
-                mockImageChecker.checkForUpdate(any(), any(), any(), any(), any())
+                mockImageChecker.checkForUpdateOutcome(any(), any(), any(), any(), any())
             } coAnswers {
                 // Slow registry lookup keeps the manual check in flight.
                 delay(1000)
-                ImageUpdateResult(
-                    currentImage = "nginx:1.20.0",
-                    newImage = null,
-                    reason = "No newer version available",
+                ImageCheckOutcome.UpToDate(
+                    ImageUpdateResult(
+                        currentImage = "nginx:1.20.0",
+                        newImage = null,
+                        reason = "No newer version available",
+                    ),
                 )
             }
 
@@ -502,7 +566,7 @@ class WatchControllerTest {
             runCurrent()
 
             coVerify(exactly = 1) {
-                mockImageChecker.checkForUpdate(any(), any(), any(), any(), any())
+                mockImageChecker.checkForUpdateOutcome(any(), any(), any(), any(), any())
             }
 
             // A fresh request after completion must run again.
@@ -512,7 +576,7 @@ class WatchControllerTest {
             runCurrent()
 
             coVerify(exactly = 2) {
-                mockImageChecker.checkForUpdate(any(), any(), any(), any(), any())
+                mockImageChecker.checkForUpdateOutcome(any(), any(), any(), any(), any())
             }
         }
 
@@ -561,7 +625,7 @@ class WatchControllerTest {
             } returns deployment.copy(annotations = deployment.annotations - WatchClusterAnnotations.CHECK_NOW)
             coEvery { mockK8sClient.recordDeploymentEvent(any(), any(), any(), any(), any()) } returns Unit
             coEvery {
-                mockImageChecker.checkForUpdate(
+                mockImageChecker.checkForUpdateOutcome(
                     "nginx:1.20.0",
                     any(),
                     "test-ns",
@@ -569,10 +633,12 @@ class WatchControllerTest {
                     "test-app",
                 )
             } returns
-                ImageUpdateResult(
-                    currentImage = "nginx:1.20.0",
-                    newImage = null,
-                    reason = "No newer version available",
+                ImageCheckOutcome.UpToDate(
+                    ImageUpdateResult(
+                        currentImage = "nginx:1.20.0",
+                        newImage = null,
+                        reason = "No newer version available",
+                    ),
                 )
 
             val controller =
@@ -592,7 +658,7 @@ class WatchControllerTest {
                 )
             }
             coVerify(exactly = 1) {
-                mockImageChecker.checkForUpdate(
+                mockImageChecker.checkForUpdateOutcome(
                     "nginx:1.20.0",
                     any(),
                     "test-ns",
@@ -741,12 +807,14 @@ class WatchControllerTest {
                 mockK8sClient.patchDeployment("test-ns", "test-app", any())
             } returns deployment.copy(annotations = deployment.annotations - WatchClusterAnnotations.CHECK_NOW)
             coEvery {
-                mockImageChecker.checkForUpdate(any(), any(), any(), any(), any())
+                mockImageChecker.checkForUpdateOutcome(any(), any(), any(), any(), any())
             } returns
-                ImageUpdateResult(
-                    currentImage = "nginx:1.20.0",
-                    newImage = null,
-                    reason = "No newer version available",
+                ImageCheckOutcome.UpToDate(
+                    ImageUpdateResult(
+                        currentImage = "nginx:1.20.0",
+                        newImage = null,
+                        reason = "No newer version available",
+                    ),
                 )
 
             val controller =
@@ -761,7 +829,7 @@ class WatchControllerTest {
             runCurrent()
 
             coVerify(exactly = 1) {
-                mockImageChecker.checkForUpdate(any(), any(), any(), any(), any())
+                mockImageChecker.checkForUpdateOutcome(any(), any(), any(), any(), any())
             }
             assertTrue(controller.workers.containsKey("test-ns/test-app"))
         }
@@ -826,16 +894,21 @@ class WatchControllerTest {
             val ticker = ManualCronTicker()
 
             coEvery {
-                mockImageChecker.checkForUpdate(any(), any(), any(), any(), any())
+                mockImageChecker.checkForUpdateOutcome(any(), any(), any(), any(), any())
             } coAnswers {
                 // Simulate a slow registry lookup / rollout.
                 delay(1000)
-                ImageUpdateResult(
-                    currentImage = "nginx:1.20.0",
-                    newImage = "nginx:1.21.0",
-                    reason = "Found newer version: 1.21.0",
+                ImageCheckOutcome.UpdateAvailable(
+                    ImageUpdateResult(
+                        currentImage = "nginx:1.20.0",
+                        newImage = "nginx:1.21.0",
+                        reason = "Found newer version: 1.21.0",
+                    ),
                 )
             }
+            coEvery {
+                mockDeploymentUpdater.updateDeployment(any(), any(), any(), any(), any(), any())
+            } returns DeploymentUpdateOutcome.PatchAppliedAndCompleted("nginx:1.21.0")
 
             val controller =
                 createController(
@@ -892,12 +965,14 @@ class WatchControllerTest {
             val mockImageChecker = mockk<ImageChecker>()
             val mockDeploymentUpdater = mockk<DeploymentUpdater>(relaxed = true)
             coEvery {
-                mockImageChecker.checkForUpdate(any(), any(), any(), any(), any())
+                mockImageChecker.checkForUpdateOutcome(any(), any(), any(), any(), any())
             } returns
-                ImageUpdateResult(
-                    currentImage = "nginx:1.20.0",
-                    newImage = null,
-                    reason = "Already at latest version",
+                ImageCheckOutcome.UpToDate(
+                    ImageUpdateResult(
+                        currentImage = "nginx:1.20.0",
+                        newImage = null,
+                        reason = "Already at latest version",
+                    ),
                 )
 
             val controller =
@@ -936,7 +1011,7 @@ class WatchControllerTest {
             ticker.fire()
             runCurrent()
             coVerify(exactly = 1) {
-                mockImageChecker.checkForUpdate(any(), any(), any(), any(), any())
+                mockImageChecker.checkForUpdateOutcome(any(), any(), any(), any(), any())
             }
         }
 
@@ -952,7 +1027,7 @@ class WatchControllerTest {
 
             // Setup: ImageChecker returns update if current image is v2.2.2, otherwise no update
             coEvery {
-                mockImageChecker.checkForUpdate(
+                mockImageChecker.checkForUpdateOutcome(
                     capture(currentImageCaptures),
                     any(),
                     any(),
@@ -962,18 +1037,29 @@ class WatchControllerTest {
             } answers {
                 val currentImage = currentImageCaptures.last()
                 if (currentImage.contains("v2.2.2")) {
-                    ImageUpdateResult(
-                        currentImage = currentImage,
-                        newImage = "ghcr.io/immich-app/immich-server:v2.2.3@sha256:new",
-                        reason = "Found newer version: v2.2.3",
+                    ImageCheckOutcome.UpdateAvailable(
+                        ImageUpdateResult(
+                            currentImage = currentImage,
+                            newImage = "ghcr.io/immich-app/immich-server:v2.2.3@sha256:new",
+                            reason = "Found newer version: v2.2.3",
+                        ),
                     )
                 } else {
-                    ImageUpdateResult(
-                        currentImage = currentImage,
-                        newImage = null,
-                        reason = "Already at latest version",
+                    ImageCheckOutcome.UpToDate(
+                        ImageUpdateResult(
+                            currentImage = currentImage,
+                            newImage = null,
+                            reason = "Already at latest version",
+                        ),
                     )
                 }
+            }
+            coEvery {
+                mockDeploymentUpdater.updateDeployment(any(), any(), any(), any(), any(), any())
+            } answers {
+                DeploymentUpdateOutcome.PatchAppliedAndCompleted(
+                    thirdArg(),
+                )
             }
 
             val controller =

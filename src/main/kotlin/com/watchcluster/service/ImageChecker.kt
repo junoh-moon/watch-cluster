@@ -8,10 +8,27 @@ import com.watchcluster.model.ImageUpdateResult
 import com.watchcluster.model.UpdateStrategy
 import com.watchcluster.util.ImageParser
 import com.watchcluster.util.compareTo
+import kotlinx.coroutines.CancellationException
 import mu.KotlinLogging
 import java.util.Base64
 
 private val logger = KotlinLogging.logger {}
+
+sealed interface ImageCheckOutcome {
+    data class UpdateAvailable(
+        val result: ImageUpdateResult,
+    ) : ImageCheckOutcome
+
+    data class UpToDate(
+        val result: ImageUpdateResult,
+    ) : ImageCheckOutcome
+
+    data class Failed(
+        val currentImage: String,
+        val message: String,
+        val cause: Throwable,
+    ) : ImageCheckOutcome
+}
 
 class ImageChecker(
     private val k8sClient: K8sClient,
@@ -31,19 +48,55 @@ class ImageChecker(
         imagePullSecrets: List<String>?,
         deploymentName: String? = null,
     ): ImageUpdateResult =
-        runCatching {
+        when (
+            val outcome =
+                checkForUpdateOutcome(
+                    currentImage,
+                    strategy,
+                    namespace,
+                    imagePullSecrets,
+                    deploymentName,
+                )
+        ) {
+            is ImageCheckOutcome.UpdateAvailable -> outcome.result
+            is ImageCheckOutcome.UpToDate -> outcome.result
+            is ImageCheckOutcome.Failed ->
+                createImageUpdateResult(
+                    currentImage = outcome.currentImage,
+                    newImage = null,
+                    reason = "Error: ${outcome.message}",
+                )
+        }
+
+    suspend fun checkForUpdateOutcome(
+        currentImage: String,
+        strategy: UpdateStrategy,
+        namespace: String,
+        imagePullSecrets: List<String>?,
+        deploymentName: String? = null,
+    ): ImageCheckOutcome =
+        try {
             val dockerAuth = imagePullSecrets?.let { extractDockerAuth(namespace, it, currentImage) }
 
-            when (strategy) {
-                is UpdateStrategy.Version -> checkVersionUpdate(currentImage, strategy, dockerAuth)
-                is UpdateStrategy.Latest -> checkLatestUpdate(currentImage, dockerAuth, namespace, deploymentName)
+            val result =
+                when (strategy) {
+                    is UpdateStrategy.Version -> checkVersionUpdate(currentImage, strategy, dockerAuth)
+                    is UpdateStrategy.Latest -> checkLatestUpdate(currentImage, dockerAuth, namespace, deploymentName)
+                }
+
+            if (result.newImage != null) {
+                ImageCheckOutcome.UpdateAvailable(result)
+            } else {
+                ImageCheckOutcome.UpToDate(result)
             }
-        }.getOrElse { e ->
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
             logger.error(e) { "Error checking image update for $currentImage" }
-            createImageUpdateResult(
+            ImageCheckOutcome.Failed(
                 currentImage = currentImage,
-                newImage = null,
-                reason = "Error: ${e.message}",
+                message = e.message ?: "Unknown registry error",
+                cause = e,
             )
         }
 
@@ -270,42 +323,33 @@ class ImageChecker(
             )
         }
 
-        return runCatching {
-            val currentImageDigest =
-                getCurrentImageDigest(
-                    image = currentImage,
-                    registry = registry,
-                    repository = repository,
-                    dockerAuth = dockerAuth,
-                    namespace = namespace,
-                    deploymentName = deploymentName,
-                )
-            val registryDigest = getImageDigest(registry, repository, tag, dockerAuth, currentImageDigest.platform)
-            val currentDigest = currentImageDigest.digest
+        val currentImageDigest =
+            getCurrentImageDigest(
+                image = currentImage,
+                registry = registry,
+                repository = repository,
+                dockerAuth = dockerAuth,
+                namespace = namespace,
+                deploymentName = deploymentName,
+            )
+        val registryDigest = getImageDigest(registry, repository, tag, dockerAuth, currentImageDigest.platform)
+        val currentDigest = currentImageDigest.digest
 
-            if (registryDigest != null && currentDigest != null && registryDigest != currentDigest) {
-                createImageUpdateResult(
-                    currentImage = currentImage,
-                    newImage = ImageParser.removeDigest(currentImage),
-                    reason = if (tag == "latest") "Latest image has been updated" else "Tag '$tag' has been updated",
-                    currentDigest = currentDigest,
-                    newDigest = registryDigest,
-                )
-            } else {
-                createImageUpdateResult(
-                    currentImage = currentImage,
-                    newImage = null,
-                    reason = "Already using the latest image",
-                    currentDigest = currentDigest,
-                    newDigest = registryDigest,
-                )
-            }
-        }.getOrElse { e ->
-            logger.error(e) { "Error checking image digest for tag '$tag'" }
+        return if (registryDigest != null && currentDigest != null && registryDigest != currentDigest) {
+            createImageUpdateResult(
+                currentImage = currentImage,
+                newImage = ImageParser.removeDigest(currentImage),
+                reason = if (tag == "latest") "Latest image has been updated" else "Tag '$tag' has been updated",
+                currentDigest = currentDigest,
+                newDigest = registryDigest,
+            )
+        } else {
             createImageUpdateResult(
                 currentImage = currentImage,
                 newImage = null,
-                reason = "Error checking digest: ${e.message}",
+                reason = "Already using the latest image",
+                currentDigest = currentDigest,
+                newDigest = registryDigest,
             )
         }
     }
@@ -314,13 +358,7 @@ class ImageChecker(
         registry: String?,
         repository: String,
         dockerAuth: DockerAuth?,
-    ): List<String> =
-        runCatching {
-            registryClient.getTags(registry, repository, dockerAuth)
-        }.getOrElse { e ->
-            logger.error(e) { "Error fetching tags for $repository" }
-            emptyList()
-        }
+    ): List<String> = registryClient.getTags(registry, repository, dockerAuth)
 
     private suspend fun getImageDigest(
         registry: String?,
