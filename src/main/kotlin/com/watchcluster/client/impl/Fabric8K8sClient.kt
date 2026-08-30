@@ -5,6 +5,7 @@ import com.watchcluster.client.K8sWatcher
 import com.watchcluster.client.domain.ContainerInfo
 import com.watchcluster.client.domain.ContainerStatus
 import com.watchcluster.client.domain.DeploymentCondition
+import com.watchcluster.client.domain.DeploymentEventInfo
 import com.watchcluster.client.domain.DeploymentInfo
 import com.watchcluster.client.domain.DeploymentStatus
 import com.watchcluster.client.domain.EventType
@@ -222,6 +223,37 @@ class Fabric8K8sClient(
             }
         }
     }
+
+    override suspend fun listDeploymentEvents(
+        namespace: String,
+        deploymentName: String,
+        limit: Int,
+    ): List<DeploymentEventInfo> =
+        withContext(Dispatchers.IO) {
+            // Failures propagate: the caller must be able to tell "no events"
+            // from "events are unreadable" (e.g. RBAC missing the list verb).
+            kubernetesClient
+                .v1()
+                .events()
+                .inNamespace(namespace)
+                .withField("involvedObject.kind", "Deployment")
+                .withField("involvedObject.name", deploymentName)
+                .list()
+                .items
+                .map { event ->
+                    DeploymentEventInfo(
+                        type = event.type ?: "Normal",
+                        reason = event.reason ?: "",
+                        message = event.message ?: "",
+                        count = event.count ?: 1,
+                        lastTimestamp = event.lastTimestamp ?: event.eventTime?.time ?: event.firstTimestamp,
+                    )
+                }
+                // Events carry no guaranteed ordering; sort newest first so a
+                // `limit` truncation keeps the most relevant ones.
+                .sortedByDescending { it.lastTimestamp ?: "" }
+                .take(limit)
+        }
 
     override suspend fun getPod(
         namespace: String,

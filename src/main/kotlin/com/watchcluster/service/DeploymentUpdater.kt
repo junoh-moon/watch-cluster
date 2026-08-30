@@ -6,6 +6,7 @@ import com.watchcluster.client.domain.DeploymentConditionReason
 import com.watchcluster.client.domain.DeploymentConditionType
 import com.watchcluster.client.domain.K8sConditionStatus
 import com.watchcluster.client.domain.PodConditionType
+import com.watchcluster.client.domain.replicasConverged
 import com.watchcluster.model.DeploymentEventData
 import com.watchcluster.model.ImagePlatform
 import com.watchcluster.model.UpdateStrategy
@@ -246,17 +247,7 @@ class DeploymentUpdater(
                 val isAvailable = availableCondition?.status == K8sConditionStatus.TRUE
                 val isComplete = progressingCondition?.reason == DeploymentConditionReason.NEW_REPLICA_SET_AVAILABLE
 
-                // Check replica counts
-                val replicas = deployment.replicas
-                val updatedReplicas = status.updatedReplicas ?: 0
-                val readyReplicas = status.readyReplicas ?: 0
-                val availableReplicas = status.availableReplicas ?: 0
-
-                // Check if all replicas are updated and ready
-                val replicasReady =
-                    updatedReplicas == replicas &&
-                        readyReplicas == replicas &&
-                        availableReplicas == replicas
+                val replicasReady = status.replicasConverged(deployment.replicas)
 
                 if (replicasReady && isAvailable && isComplete) {
                     // Verify actual pod images
@@ -286,9 +277,9 @@ class DeploymentUpdater(
                 logger.debug {
                     listOf(
                         "Rollout progress - Generation: ${status.observedGeneration}/${deployment.generation}",
-                        "Updated: $updatedReplicas/$replicas",
-                        "Ready: $readyReplicas/$replicas",
-                        "Available: $availableReplicas/$replicas",
+                        "Updated: ${status.updatedReplicas ?: 0}/${deployment.replicas}",
+                        "Ready: ${status.readyReplicas ?: 0}/${deployment.replicas}",
+                        "Available: ${status.availableReplicas ?: 0}/${deployment.replicas}",
                         "Progressing: $isProgressing (${progressingCondition?.reason})",
                         "Available: ${availableCondition?.status}",
                     ).joinToString(", ")

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: watch-cluster
+  namespace: watch-cluster
+  labels:
+    app: watch-cluster
+spec:
+  type: ClusterIP
+  selector:
+    app: watch-cluster
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP

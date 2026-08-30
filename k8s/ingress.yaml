@@ -1,0 +1,65 @@
+# Admin UI ingress with basic auth.
+#
+# Create the credential secret first (htpasswd is provided by apache2-utils):
+#
+#   htpasswd -c auth admin
+#   kubectl create secret generic watch-cluster-basic-auth \
+#     --from-file=auth -n watch-cluster
+#
+# Two things this does NOT do on its own:
+#
+#  1. TLS. Basic auth sends reusable credentials on every request, so serve this
+#     over HTTPS. The force-ssl-redirect annotation below refuses plain HTTP;
+#     uncomment the tls block (or terminate TLS upstream) before exposing it.
+#  2. Protect in-cluster traffic. Any pod can still reach the Service directly.
+#     Set ADMIN_TOKEN on the Deployment, and/or apply the NetworkPolicy below.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: watch-cluster
+  namespace: watch-cluster
+  annotations:
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: watch-cluster-basic-auth
+    nginx.ingress.kubernetes.io/auth-realm: "watch-cluster admin"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  # tls:
+  #   - hosts:
+  #       - watch-cluster.example.com
+  #     secretName: watch-cluster-tls
+  rules:
+    - host: watch-cluster.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: watch-cluster
+                port:
+                  name: http
+---
+# Optional: restrict Service access to the ingress controller, closing the
+# in-cluster path that basic auth does not cover. Adjust the namespace label
+# selector to match your ingress controller.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: watch-cluster-admin
+  namespace: watch-cluster
+spec:
+  podSelector:
+    matchLabels:
+      app: watch-cluster
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 8080
+          protocol: TCP
