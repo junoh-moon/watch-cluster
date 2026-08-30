@@ -27,13 +27,25 @@ sealed class UpdateStrategy {
     }
 
     companion object {
-        fun fromString(value: String): UpdateStrategy =
+        /**
+         * Strict parse: null for anything that is not a known strategy.
+         * Callers accepting user input use this so a typo is rejected rather
+         * than silently becoming the default.
+         */
+        fun parseOrNull(value: String): UpdateStrategy? =
             when (value.lowercase()) {
                 "latest" -> Latest
                 "version-lock-major" -> Version(lockMajorVersion = true)
                 "version", "semver" -> Version()
-                else -> Version() // default
+                else -> null
             }
+
+        /**
+         * Lenient parse for annotations written outside the API (e.g. by
+         * `kubectl annotate`), where an unrecognised value must still yield a
+         * usable strategy.
+         */
+        fun fromString(value: String): UpdateStrategy = parseOrNull(value) ?: Version()
     }
 }
 
@@ -122,6 +134,7 @@ object WatchClusterAnnotations {
     const val CRON = "watch-cluster.io/cron"
     const val DEFAULT_CRON = "*/5 * * * *"
     const val STRATEGY = "watch-cluster.io/strategy"
+    const val DEFAULT_STRATEGY = "version"
     const val CHECK_NOW = "watch-cluster.io/check-now"
     const val VERSION_PATTERN = "watch-cluster.io/version-pattern"
     const val LOCK_MAJOR_VERSION = "watch-cluster.io/lock-major-version"

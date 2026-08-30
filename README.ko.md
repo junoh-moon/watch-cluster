@@ -12,6 +12,7 @@ Kubernetes용 자동 컨테이너 이미지 업데이트 도구입니다. Docker
 - Deployment로 배포되어 클러스터에서 실행
 - 롤링 업데이트 완료까지 대기
 - 웹훅을 통한 이벤트 알림 (deployment 감지, 이미지 롤아웃 상태)
+- 감시 현황 조회와 수동 업데이트를 위한 내장 웹 UI
 
 ## 시작하기
 
@@ -30,6 +31,8 @@ Kubernetes용 자동 컨테이너 이미지 업데이트 도구입니다. Docker
 - `rbac.yaml`: ServiceAccount, ClusterRole, ClusterRoleBinding 설정
 - `configmap.yaml`: 웹훅 설정을 위한 ConfigMap
 - `deployment.yaml`: watch-cluster 애플리케이션 배포 설정
+- `service.yaml`: 웹 UI를 노출하는 ClusterIP Service
+- `ingress.yaml`: basic auth가 적용된 Ingress 및 선택적 NetworkPolicy
 - `example-deployment.yaml`: 테스트용 예시 애플리케이션 (버전 태그)
 - `example-deployment-stable.yaml`: 임의 태그(stable, custom tag) 사용 예시
 
@@ -52,6 +55,10 @@ kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/rbac.yaml
 kubectl apply -f k8s/configmap.yaml
 kubectl apply -f k8s/deployment.yaml
+
+# 5. 웹 UI 노출 (선택사항)
+kubectl apply -f k8s/service.yaml
+kubectl apply -f k8s/ingress.yaml   # host를 먼저 수정하십시오
 ```
 
 ### 기존 설치 업그레이드
@@ -207,6 +214,79 @@ annotations:
 
 `*/N`은 고정 간격 타이머가 아니라 해당 필드에서 `N` 간격으로 매칭되는 값입니다. 예를 들어 `*/7 * * * *`는 매시간 `0, 7, 14, ..., 56`분에 실행됩니다.
 
+## 웹 UI
+
+watch-cluster는 컨트롤러와 동일한 프로세스에서 8080 포트로 관리 UI와 JSON API를
+제공합니다. 스케줄 상태와 체크 이력은 컨트롤러 메모리에만 존재하므로, 같은
+프로세스에 두어야 annotation만으로는 알 수 없는 정보까지 보여줄 수 있습니다.
+
+```bash
+kubectl apply -f k8s/service.yaml
+
+# Ingress 없이 확인
+kubectl port-forward -n watch-cluster svc/watch-cluster 8080:80
+open http://localhost:8080
+```
+
+UI에서 할 수 있는 일:
+
+- 감시 중인 Deployment 목록을 전략·스케줄·다음 체크 시각·마지막 체크 결과와 함께 조회
+- 행을 펼쳐 체크 이력, Kubernetes 이벤트 확인 및 cron/전략 즉시 수정
+- 수동 체크 트리거
+- 클러스터의 미적용 Deployment 중에서 골라 새 앱 감시 시작
+
+### API 레퍼런스
+
+| Method | Path | 설명 |
+|--------|------|------|
+| `GET` | `/api/apps` | 감시 중인 deployment의 스케줄·체크 상태 |
+| `GET` | `/api/apps/{ns}/{name}` | 상세 정보 (메모리 체크 이력 + Kubernetes 이벤트) |
+| `POST` | `/api/apps/{ns}/{name}/check` | 체크 1회 트리거 (202, 비동기 실행) |
+| `PUT` | `/api/apps/{ns}/{name}/watch` | 감시 시작 또는 `{"cron": "...", "strategy": "..."}` 수정. 생략한 필드는 기존 값 유지 |
+| `DELETE` | `/api/apps/{ns}/{name}/watch` | 감시 해제 (`enabled: "false"`, cron/전략은 보존) |
+| `GET` | `/api/deployments` | 아직 감시하지 않는 deployment 후보 목록 |
+| `GET` | `/healthz`, `/readyz` | 헬스 프로브 (인증 대상 아님) |
+
+모든 쓰기는 `kubectl annotate`가 설정하는 것과 동일한 `watch-cluster.io/*`
+annotation을 거치므로 UI·API·CLI가 하나의 경로를 공유합니다. 잘못된 cron
+표현식이나 알 수 없는 전략은 기본값으로 대체하지 않고 400으로 거부합니다.
+
+### 인증
+
+`k8s/ingress.yaml`은 nginx basic auth로 UI를 보호합니다:
+
+```bash
+htpasswd -c auth admin
+kubectl create secret generic watch-cluster-basic-auth --from-file=auth -n watch-cluster
+```
+
+Ingress의 basic auth는 클러스터 내부 트래픽을 막지 못합니다. 어떤 파드든 ClusterIP
+Service로 직접 접근할 수 있고, 쓰기 API는 클러스터 내 모든 Deployment의 annotation을
+바꿀 수 있습니다. 이를 막으려면 다음 두 가지를 선택적으로 적용하십시오:
+
+- watch-cluster Deployment에 `ADMIN_TOKEN`을 설정합니다. 설정하면 `/api/*` 호출에
+  `Authorization: Bearer <token>`이 필요하며, UI가 토큰을 입력받아
+  `localStorage`에 보관합니다. 설정하지 않으면(기본값) API는 열려 있으며 Ingress가
+  보호를 담당합니다.
+- `k8s/ingress.yaml`에 포함된 NetworkPolicy를 적용합니다.
+
+### 설정
+
+| 환경 변수 | 설명 | 기본값 |
+|----------|------|--------|
+| `HTTP_PORT` | 웹 UI 및 API 포트 | 8080 |
+| `ADMIN_TOKEN` | `/api/*` 접근에 필요한 bearer 토큰. 미설정 시 앱 수준 인증 없음 | - |
+
+### 제한사항
+
+- 체크 이력은 메모리에만 보관되어 파드 재시작 시 소실됩니다. 재시작 후에도 남는
+  업데이트 이력은 `watch-cluster.io/last-update`, `watch-cluster.io/change`
+  annotation과 Kubernetes 이벤트에 있습니다.
+- UI가 Kubernetes 이벤트를 읽으려면 `k8s/rbac.yaml`에 추가된 `list` 권한이
+  필요합니다. 업그레이드 시 다시 적용하십시오.
+- 워커 상태는 프로세스별로 존재하므로 replica는 1개로 운영해야 합니다 (기본
+  Deployment는 이미 `replicas: 1` + `Recreate` 전략입니다).
+
 ## 고급 사용법
 
 ### 업데이트 후 상태 확인
@@ -339,6 +419,7 @@ annotations:
 - 현재는 각 Deployment의 첫 번째 컨테이너만 업데이트합니다
 - Private 레지스트리 인증은 Kubernetes imagePullSecret을 통해 지원됩니다
 - 롤백 기능은 포함되어 있지 않습니다
+- 웹 UI의 체크 이력은 메모리에만 있어 재시작 시 소실됩니다
 - Docker 데몬에 직접 접근하지 않고 레지스트리 API를 통해 이미지 정보를 확인합니다
 
 ## 문제 해결

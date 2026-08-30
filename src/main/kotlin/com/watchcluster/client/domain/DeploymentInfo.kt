@@ -20,6 +20,16 @@ data class DeploymentStatus(
     val conditions: List<DeploymentCondition> = emptyList(),
 )
 
+/**
+ * True when Kubernetes has converged on [desiredReplicas] — every replica
+ * updated, ready, and available. Shared by the rollout wait and the admin API
+ * so both mean the same thing by "rollout complete".
+ */
+fun DeploymentStatus.replicasConverged(desiredReplicas: Int): Boolean =
+    (updatedReplicas ?: 0) == desiredReplicas &&
+        (readyReplicas ?: 0) == desiredReplicas &&
+        (availableReplicas ?: 0) == desiredReplicas
+
 data class DeploymentCondition(
     val type: String,
     val status: String,

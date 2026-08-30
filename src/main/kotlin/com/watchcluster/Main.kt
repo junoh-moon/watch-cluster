@@ -1,5 +1,7 @@
 package com.watchcluster
 
+import com.watchcluster.api.AdminService
+import com.watchcluster.api.HttpServer
 import com.watchcluster.client.impl.Fabric8K8sClient
 import com.watchcluster.controller.WatchController
 import com.watchcluster.model.WebhookConfig
@@ -67,10 +69,16 @@ fun main(): Unit =
             logger.info { "==================================" }
 
             val controller = WatchController(k8sClient)
+            val httpServer = HttpServer.fromEnvironment(AdminService(k8sClient, controller))
             val shutdownStarted = AtomicBoolean(false)
             val shutdown: suspend () -> Unit = {
                 if (shutdownStarted.compareAndSet(false, true)) {
                     logger.info { "Stopping watch-cluster..." }
+                    // Stop accepting admin requests before the controller
+                    // goes away, so no request observes a half-torn-down
+                    // controller.
+                    runCatching { httpServer.stop() }
+                        .onFailure { e -> logger.warn(e) { "Failed to stop admin server cleanly" } }
                     controller.stopAndJoin()
                     k8sClient.close()
                 }
@@ -86,6 +94,7 @@ fun main(): Unit =
 
             try {
                 controller.start()
+                httpServer.start()
                 Runtime.getRuntime().addShutdownHook(shutdownHook)
                 hookRegistered = true
 
