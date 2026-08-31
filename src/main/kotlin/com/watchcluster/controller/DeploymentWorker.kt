@@ -1,7 +1,7 @@
 package com.watchcluster.controller
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.watchcluster.client.K8sClient
+import com.watchcluster.client.patchAnnotations
 import com.watchcluster.model.DeploymentEventData
 import com.watchcluster.model.WatchClusterAnnotations
 import com.watchcluster.model.WatchedDeployment
@@ -21,10 +21,10 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import mu.KotlinLogging
+import java.time.Instant
 import java.util.concurrent.atomic.AtomicBoolean
 
 private val logger = KotlinLogging.logger {}
-private val objectMapper = ObjectMapper()
 
 internal enum class DeploymentCheckStatus {
     UPDATED,
@@ -37,6 +37,31 @@ internal enum class DeploymentCheckStatus {
 internal data class DeploymentCheckResult(
     val status: DeploymentCheckStatus,
     val message: String,
+)
+
+internal enum class CheckTrigger {
+    CRON,
+    MANUAL,
+}
+
+/** One completed check, retained in memory for the status API. */
+internal data class CheckRecord(
+    val at: Instant,
+    val trigger: CheckTrigger,
+    val status: DeploymentCheckStatus,
+    val message: String,
+    val image: String,
+)
+
+/**
+ * Point-in-time view of a worker for the admin API. Everything here except
+ * [spec] lives only in memory and is lost when the controller restarts.
+ */
+internal data class WorkerStatus(
+    val spec: WatchedDeployment,
+    val checkInProgress: Boolean,
+    /** Newest first; empty until the worker has completed a check. */
+    val recentChecks: List<CheckRecord>,
 )
 
 internal sealed interface WorkerCommand {
@@ -79,6 +104,8 @@ internal class DeploymentWorker(
 ) {
     private val mailbox = Channel<WorkerCommand>(Channel.UNLIMITED)
     private val stopRequested = AtomicBoolean(false)
+    private val checkInProgress = AtomicBoolean(false)
+    private val history = ArrayDeque<CheckRecord>()
 
     /**
      * True from the moment a manual check is accepted until it finishes, so
@@ -103,6 +130,37 @@ internal class DeploymentWorker(
 
     val isStopRequested: Boolean
         get() = stopRequested.get()
+
+    /**
+     * Snapshot for the admin API. Read from HTTP threads while the worker
+     * coroutine writes, so every mutable field is either atomic, volatile, or
+     * guarded by [history]'s monitor.
+     */
+    internal fun status(): WorkerStatus =
+        WorkerStatus(
+            spec = spec,
+            checkInProgress = checkInProgress.get(),
+            recentChecks = synchronized(history) { history.toList() }.asReversed(),
+        )
+
+    private fun recordCheck(
+        trigger: CheckTrigger,
+        image: String,
+        result: DeploymentCheckResult,
+    ) {
+        val record =
+            CheckRecord(
+                at = Instant.now(),
+                trigger = trigger,
+                status = result.status,
+                message = result.message,
+                image = image,
+            )
+        synchronized(history) {
+            history.addLast(record)
+            while (history.size > HISTORY_LIMIT) history.removeFirst()
+        }
+    }
 
     fun start() {
         job.start()
@@ -249,10 +307,20 @@ internal class DeploymentWorker(
         logger.info { "Watching deployment: $key with cron: ${spec.cronExpression} and strategy: ${spec.updateStrategy}" }
     }
 
-    internal suspend fun checkAndUpdate(): DeploymentCheckResult {
+    internal suspend fun checkAndUpdate(trigger: CheckTrigger = CheckTrigger.CRON): DeploymentCheckResult {
         val deployment = spec
+        checkInProgress.set(true)
+        try {
+            val result = runCheck(deployment)
+            recordCheck(trigger, deployment.currentImage, result)
+            return result
+        } finally {
+            checkInProgress.set(false)
+        }
+    }
 
-        return runCatching {
+    private suspend fun runCheck(deployment: WatchedDeployment): DeploymentCheckResult =
+        runCatching {
             logger.info { "Current image: ${deployment.currentImage}" }
             logger.info { "Checking for updates: ${deployment.namespace}/${deployment.name}" }
 
@@ -281,7 +349,6 @@ internal class DeploymentWorker(
             logger.error(e) { "Error checking deployment ${deployment.namespace}/${deployment.name}" }
             DeploymentCheckResult(DeploymentCheckStatus.FAILED, message)
         }
-    }
 
     private suspend fun updateDeployment(
         deployment: WatchedDeployment,
@@ -375,27 +442,14 @@ internal class DeploymentWorker(
             type = "Normal",
         )
 
-        val result = checkAndUpdate()
+        val result = checkAndUpdate(CheckTrigger.MANUAL)
         recordManualCheckResult(namespace, name, result)
     }
 
     private suspend fun removeCheckNowAnnotation(
         namespace: String,
         name: String,
-    ): Boolean {
-        val annotationPatch: Map<String, String?> = mapOf(WatchClusterAnnotations.CHECK_NOW to null)
-        val patchJson =
-            objectMapper.writeValueAsString(
-                mapOf(
-                    "metadata" to
-                        mapOf(
-                            "annotations" to annotationPatch,
-                        ),
-                ),
-            )
-
-        return k8sClient.patchDeployment(namespace, name, patchJson) != null
-    }
+    ): Boolean = k8sClient.patchAnnotations(namespace, name, mapOf(WatchClusterAnnotations.CHECK_NOW to null))
 
     private suspend fun recordManualCheckResult(
         namespace: String,
@@ -432,5 +486,9 @@ internal class DeploymentWorker(
         }.onFailure { e ->
             logger.warn(e) { "Failed to audit event $reason for deployment $namespace/$deploymentName" }
         }
+    }
+
+    private companion object {
+        const val HISTORY_LIMIT = 20
     }
 }

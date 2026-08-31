@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>watch-cluster</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --surface-alt: #f0f2f5;
+    --border: #dfe3e8;
+    --text: #1b1f24;
+    --text-dim: #626a73;
+    --accent: #2b6cb0;
+    --ok: #237f52;
+    --warn: #9a6700;
+    --err: #b42318;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16191d;
+      --surface: #1d2126;
+      --surface-alt: #23282e;
+      --border: #333a42;
+      --text: #e6e9ec;
+      --text-dim: #98a1ab;
+      --accent: #6aa9e9;
+      --ok: #5dc98d;
+      --warn: #e0b341;
+      --err: #f0776a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 20px; background: var(--surface);
+    border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+  header .spacer { flex: 1; }
+  .pulse { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+  main { padding: 20px; max-width: 1400px; margin: 0 auto; }
+  button {
+    font: inherit; font-size: 13px; padding: 5px 11px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: var(--surface-alt); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+  button.danger { color: var(--err); border-color: var(--err); background: transparent; }
+  input, select {
+    font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  }
+  input[type=text] { font-family: var(--mono); }
+  table { width: 100%; border-collapse: collapse; background: var(--surface);
+          border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  th { font-size: 12px; font-weight: 600; color: var(--text-dim); background: var(--surface-alt); white-space: nowrap; }
+  tbody tr.app:hover { background: var(--surface-alt); }
+  tbody tr.app { cursor: pointer; }
+  tr:last-child td { border-bottom: none; }
+  .mono { font-family: var(--mono); font-size: 12.5px; }
+  .dim { color: var(--text-dim); }
+  .nowrap { white-space: nowrap; }
+  .name { font-weight: 600; }
+  .badge {
+    display: inline-block; padding: 1px 7px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 600; border: 1px solid currentColor; white-space: nowrap;
+  }
+  .badge.ok { color: var(--ok); } .badge.warn { color: var(--warn); }
+  .badge.err { color: var(--err); } .badge.idle { color: var(--text-dim); }
+  .badge.run { color: var(--accent); }
+  .detail { background: var(--surface-alt); }
+  .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; padding: 4px 0 8px; }
+  .detail h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em;
+               color: var(--text-dim); margin: 0 0 8px; font-weight: 600; }
+  .log { font-family: var(--mono); font-size: 12px; max-height: 260px; overflow: auto;
+         border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
+  .log div { padding: 5px 9px; border-bottom: 1px solid var(--border); }
+  .log div:last-child { border-bottom: none; }
+  .settings { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .empty { padding: 40px; text-align: center; color: var(--text-dim); }
+  dialog {
+    border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+    color: var(--text); padding: 0; width: min(620px, 92vw); box-shadow: 0 12px 40px rgba(0,0,0,.28);
+  }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  .dlg-head { padding: 14px 18px; border-bottom: 1px solid var(--border); font-weight: 650; }
+  .dlg-body { padding: 16px 18px; }
+  .dlg-foot { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }
+  .cand { max-height: 300px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; margin: 10px 0; }
+  .cand label { display: flex; gap: 9px; align-items: center; padding: 7px 10px;
+                border-bottom: 1px solid var(--border); cursor: pointer; }
+  .cand label:hover { background: var(--surface-alt); }
+  .cand label:last-child { border-bottom: none; }
+  .field { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+  .field label { width: 76px; font-size: 13px; color: var(--text-dim); }
+  #toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 16px; box-shadow: 0 6px 24px rgba(0,0,0,.25); max-width: 80vw;
+  }
+  #toast.err { border-color: var(--err); color: var(--err); }
+  .hint { font-size: 12px; color: var(--text-dim); margin-top: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>watch-cluster</h1>
+  <span class="pulse" id="pulse"></span>
+  <span class="spacer"></span>
+  <button id="add" class="primary">+ 새 앱 감시</button>
+</header>
+
+<main>
+  <table>
+    <thead>
+      <tr>
+        <th>Deployment</th><th>이미지</th><th>전략</th><th>스케줄</th>
+        <th>다음 체크</th><th>마지막 결과</th><th>상태</th><th></th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="empty" id="empty" hidden>감시 중인 앱이 없습니다. <b>+ 새 앱 감시</b>로 추가하십시오.</div>
+</main>
+
+<dialog id="addDlg">
+  <form method="dialog">
+    <div class="dlg-head">새 앱 감시 시작</div>
+    <div class="dlg-body">
+      <input type="search" id="candSearch" placeholder="namespace 또는 이름으로 검색" style="width:100%">
+      <div class="cand" id="candList"></div>
+      <div class="field">
+        <label for="addCron">Cron</label>
+        <input type="text" id="addCron" value="*/5 * * * *" style="flex:1">
+      </div>
+      <div class="field">
+        <label for="addStrategy">전략</label>
+        <select id="addStrategy" style="flex:1"></select>
+      </div>
+      <div class="hint">선택한 Deployment에 <code>watch-cluster.io/*</code> annotation을 붙입니다. 워크로드 자체는 변경되지 않습니다.</div>
+    </div>
+    <div class="dlg-foot">
+      <button value="cancel">취소</button>
+      <button class="primary" id="addSubmit" value="ok" disabled>감시 시작</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+"use strict";
+
+const state = {
+  apps: [],
+  expanded: null,          // "ns/name" of the open detail row
+  details: {},             // key -> AppDetailDto
+  candidates: [],
+  selected: null,
+  detailFingerprint: null,
+  token: localStorage.getItem("wc-token") || "",
+  lastLoad: null,
+};
+
+const STRATEGIES = ["version", "version-lock-major", "latest"];
+
+const $ = (id) => document.getElementById(id);
+const key = (a) => a.namespace + "/" + a.name;
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+/* ---------- API ---------- */
+
+async function api(path, options = {}) {
+  const headers = Object.assign({}, options.headers);
+  if (state.token) headers["Authorization"] = "Bearer " + state.token;
+  if (options.body) headers["Content-Type"] = "application/json";
+
+  const res = await fetch(path, Object.assign({}, options, { headers }));
+
+  if (res.status === 401) {
+    // The server has ADMIN_TOKEN set; ask once and retry on the next poll.
+    const entered = prompt("관리자 토큰(ADMIN_TOKEN)을 입력하십시오:", state.token);
+    if (entered !== null) {
+      state.token = entered.trim();
+      localStorage.setItem("wc-token", state.token);
+    }
+    throw new Error("인증이 필요합니다");
+  }
+  if (!res.ok) {
+    let message = res.status + " " + res.statusText;
+    try { const body = await res.json(); if (body.error) message = body.error; } catch (_) {}
+    throw new Error(message);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+/* ---------- formatting ---------- */
+
+function relative(iso) {
+  if (!iso) return "—";
+  const then = new Date(iso).getTime();
+  if (isNaN(then)) return "—";
+  const diff = Math.round((then - Date.now()) / 1000);
+  const abs = Math.abs(diff);
+  if (abs < 5) return "방금";
+  const unit = abs < 60 ? [abs, "초"] : abs < 3600 ? [Math.round(abs / 60), "분"]
+             : abs < 86400 ? [Math.round(abs / 3600), "시간"] : [Math.round(abs / 86400), "일"];
+  return diff < 0 ? `${unit[0]}${unit[1]} 전` : `${unit[0]}${unit[1]} 후`;
+}
+
+function absolute(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso : d.toLocaleString();
+}
+
+const STATUS_CLASS = {
+  UPDATED: "ok", NO_UPDATE: "idle", FAILED: "err",
+  ROLLOUT_INCOMPLETE: "warn", SKIPPED: "warn",
+};
+const STATUS_LABEL = {
+  UPDATED: "업데이트됨", NO_UPDATE: "최신", FAILED: "실패",
+  ROLLOUT_INCOMPLETE: "롤아웃 미완료", SKIPPED: "건너뜀",
+};
+
+function statusBadge(app) {
+  if (app.checkInProgress) return '<span class="badge run">체크 중</span>';
+  if (app.checkNowPending) return '<span class="badge run">요청 대기</span>';
+  if (!app.watched) return '<span class="badge warn">워커 대기</span>';
+  if (app.rollout.inProgress) return '<span class="badge warn">롤아웃 중</span>';
+  if (!app.cronValid) return '<span class="badge err">cron 오류</span>';
+  return '<span class="badge ok">감시 중</span>';
+}
+
+function resultCell(app) {
+  const r = app.lastResult;
+  if (!r) return '<span class="dim">체크 기록 없음</span>';
+  const cls = STATUS_CLASS[r.status] || "idle";
+  return `<span class="badge ${cls}">${esc(STATUS_LABEL[r.status] || r.status)}</span>
+          <span class="dim" title="${esc(absolute(r.at))}"> ${esc(relative(r.at))}</span>`;
+}
+
+/* ---------- rendering ---------- */
+
+function render() {
+  const rows = $("rows");
+  $("empty").hidden = state.apps.length > 0;
+
+  rows.innerHTML = state.apps.map((app) => {
+    const k = key(app);
+    const open = state.expanded === k;
+    return `
+      <tr class="app" data-key="${esc(k)}">
+        <td class="nowrap"><span class="dim">${esc(app.namespace)}/</span><span class="name">${esc(app.name)}</span></td>
+        <td class="mono">${esc(app.image)}</td>
+        <td class="mono nowrap">${esc(app.strategy)}</td>
+        <td class="mono nowrap">${app.cronValid ? esc(app.cron) : `<span class="badge err">${esc(app.cron)}</span>`}</td>
+        <td class="nowrap dim" title="${esc(absolute(app.nextCheckAt))}">${esc(relative(app.nextCheckAt))}</td>
+        <td>${resultCell(app)}</td>
+        <td>${statusBadge(app)}</td>
+        <td class="nowrap"><button data-check="${esc(k)}" ${app.checkInProgress || app.checkNowPending ? "disabled" : ""}>지금 체크</button></td>
+      </tr>
+      ${open ? detailRow(app, k) : ""}`;
+  }).join("");
+}
+
+/** Shared loading / empty / list shape for the two log panels. */
+function logHtml(items, emptyText, row) {
+  if (!items) return '<div class="dim">불러오는 중…</div>';
+  if (items.length === 0) return `<div class="dim">${esc(emptyText)}</div>`;
+  return items.map(row).join("");
+}
+
+function detailRow(app, k) {
+  const ek = esc(k);
+  const d = state.details[k];
+
+  const historyHtml = logHtml(d && d.history, "이력 없음 (컨트롤러 재시작 시 소실됩니다)", (h) => `<div>
+      <span class="badge ${STATUS_CLASS[h.status] || "idle"}">${esc(STATUS_LABEL[h.status] || h.status)}</span>
+      <span class="dim">${h.trigger === "MANUAL" ? "수동" : "정기"} · ${esc(absolute(h.at))}</span>
+      <br>${esc(h.message)}</div>`);
+
+  const eventsHtml = d && d.eventsUnavailable
+    ? '<div class="dim">이벤트를 읽을 수 없습니다 — RBAC의 events list 권한을 확인하십시오</div>'
+    : logHtml(d && d.events, "Deployment 이벤트 없음", (e) => `<div>
+        <span class="badge ${e.type === "Warning" ? "warn" : "idle"}">${esc(e.reason)}</span>
+        <span class="dim">${esc(absolute(e.lastTimestamp))}${e.count > 1 ? " ×" + e.count : ""}</span>
+        <br>${esc(e.message)}</div>`);
+
+  const changed = app.change ? `<div class="hint">최근 변경: <span class="mono">${esc(app.change)}</span>
+       (${esc(absolute(app.lastUpdate))})</div>` : "";
+
+  return `<tr class="detail"><td colspan="8">
+    <div class="settings">
+      <label class="dim" for="cron-${ek}">Cron</label>
+      <input type="text" id="cron-${ek}" data-cron="${ek}" value="${esc(app.cron)}" size="18">
+      <label class="dim" for="strat-${ek}">전략</label>
+      <select id="strat-${ek}" data-strategy="${ek}">
+        ${STRATEGIES.map((s) =>
+          `<option value="${s}"${s === app.strategy ? " selected" : ""}>${s}</option>`).join("")}
+      </select>
+      <button class="primary" data-save="${ek}">저장</button>
+      <span class="spacer" style="flex:1"></span>
+      <span class="dim">replicas ${app.rollout.ready ?? 0}/${app.rollout.replicas} ready</span>
+      <button class="danger" data-unwatch="${ek}">감시 해제</button>
+    </div>
+    ${changed}
+    <div class="detail-grid">
+      <div><h3>체크 이력 (메모리)</h3><div class="log">${historyHtml}</div></div>
+      <div><h3>Kubernetes 이벤트</h3><div class="log">${eventsHtml}</div></div>
+    </div>
+  </td></tr>`;
+}
+
+/* ---------- data loading ---------- */
+
+let toastTimer = null;
+function toast(message, isError) {
+  let el = $("toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "toast";
+    document.body.appendChild(el);
+  }
+  el.textContent = message;
+  el.className = isError ? "err" : "";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.remove(), 4000);
+}
+
+/**
+ * Skip a re-render while the user is typing in the expanded row, otherwise
+ * the 3s poll would wipe the value mid-edit.
+ */
+function isEditing() {
+  const el = document.activeElement;
+  return el && (el.tagName === "INPUT" || el.tagName === "SELECT") && el.closest("tr.detail");
+}
+
+async function load() {
+  try {
+    const apps = await api("/api/apps");
+    state.apps = apps;
+    state.lastLoad = new Date();
+    if (!isEditing()) render();
+    $("pulse").textContent = "갱신 " + state.lastLoad.toLocaleTimeString();
+  } catch (e) {
+    $("pulse").textContent = "갱신 실패: " + e.message;
+  }
+}
+
+async function loadDetail(k) {
+  try {
+    state.details[k] = await api("/api/apps/" + k);
+    if (state.expanded === k && !isEditing()) render();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+/* ---------- actions ---------- */
+
+async function triggerCheck(k) {
+  try {
+    const res = await api("/api/apps/" + k + "/check", { method: "POST" });
+    toast(res.message);
+    await load();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function saveSettings(k) {
+  const cron = document.querySelector(`[data-cron="${CSS.escape(k)}"]`).value;
+  const strategy = document.querySelector(`[data-strategy="${CSS.escape(k)}"]`).value;
+  try {
+    const res = await api("/api/apps/" + k + "/watch", {
+      method: "PUT",
+      body: JSON.stringify({ cron, strategy }),
+    });
+    toast(res.message);
+    document.activeElement.blur();
+    await load();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function unwatch(k) {
+  if (!confirm(k + " 감시를 해제하시겠습니까?\n(cron/전략 설정은 남으며 enabled만 false가 됩니다)")) return;
+  try {
+    const res = await api("/api/apps/" + k + "/watch", { method: "DELETE" });
+    toast(res.message);
+    state.expanded = null;
+    await load();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------- add dialog ---------- */
+
+function renderCandidates() {
+  const q = $("candSearch").value.trim().toLowerCase();
+  const matches = state.candidates.filter((c) =>
+    !q || (c.namespace + "/" + c.name).toLowerCase().includes(q) || c.image.toLowerCase().includes(q));
+
+  $("candList").innerHTML = matches.length === 0
+    ? '<div class="empty">후보가 없습니다</div>'
+    : matches.map((c) => {
+        const k = c.namespace + "/" + c.name;
+        return `<label>
+          <input type="radio" name="cand" value="${esc(k)}"${state.selected === k ? " checked" : ""}>
+          <span><span class="dim">${esc(c.namespace)}/</span><b>${esc(c.name)}</b>
+          <span class="mono dim"> ${esc(c.image)}</span>
+          ${c.containerCount > 1 ? `<span class="badge warn">컨테이너 ${c.containerCount}개 — 첫 번째만 감시</span>` : ""}</span>
+        </label>`;
+      }).join("");
+  $("addSubmit").disabled = state.selected === null;
+}
+
+async function openAddDialog() {
+  state.selected = null;
+  $("candSearch").value = "";
+  $("candList").innerHTML = '<div class="empty">불러오는 중…</div>';
+  $("addDlg").showModal();
+  try {
+    state.candidates = await api("/api/deployments");
+    renderCandidates();
+  } catch (e) {
+    $("candList").innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+async function submitAdd() {
+  if (!state.selected) return;
+  try {
+    const res = await api("/api/apps/" + state.selected + "/watch", {
+      method: "PUT",
+      body: JSON.stringify({ cron: $("addCron").value, strategy: $("addStrategy").value }),
+    });
+    toast(res.message);
+    await load();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------- wiring ---------- */
+
+$("rows").addEventListener("click", (ev) => {
+  const check = ev.target.closest("[data-check]");
+  if (check) { ev.stopPropagation(); triggerCheck(check.dataset.check); return; }
+
+  const save = ev.target.closest("[data-save]");
+  if (save) { ev.stopPropagation(); saveSettings(save.dataset.save); return; }
+
+  const off = ev.target.closest("[data-unwatch]");
+  if (off) { ev.stopPropagation(); unwatch(off.dataset.unwatch); return; }
+
+  if (ev.target.closest("tr.detail")) return;
+
+  const row = ev.target.closest("tr.app");
+  if (!row) return;
+  const k = row.dataset.key;
+  state.expanded = state.expanded === k ? null : k;
+  render();
+  if (state.expanded) loadDetail(k);
+});
+
+$("addStrategy").innerHTML = STRATEGIES.map((s) => `<option value="${s}">${s}</option>`).join("");
+
+$("add").addEventListener("click", openAddDialog);
+$("candSearch").addEventListener("input", renderCandidates);
+$("candList").addEventListener("change", (ev) => {
+  if (ev.target.name === "cand") { state.selected = ev.target.value; $("addSubmit").disabled = false; }
+});
+$("addDlg").addEventListener("close", () => {
+  if ($("addDlg").returnValue === "ok") submitAdd();
+});
+
+function detailFingerprint(k) {
+  const app = state.apps.find((a) => key(a) === k);
+  if (!app) return null;
+  return [app.lastResult && app.lastResult.at, app.checkInProgress, app.checkNowPending, app.change].join("|");
+}
+
+load();
+setInterval(async () => {
+  if ($("addDlg").open) return;
+  await load();
+  // The apps poll is cheap; the detail poll is an Events LIST, so only redo it
+  // when something the detail actually shows has moved.
+  if (state.expanded) {
+    const fingerprint = detailFingerprint(state.expanded);
+    if (fingerprint !== state.detailFingerprint) {
+      state.detailFingerprint = fingerprint;
+      loadDetail(state.expanded);
+    }
+  }
+}, 10000);
+</script>
+</body>
+</html>

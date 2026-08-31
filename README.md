@@ -12,6 +12,7 @@ An automatic container image update tool for Kubernetes. Provides functionality 
 - Deployed as a Deployment running in the cluster
 - Waits for rolling update completion
 - Event notifications via webhooks (deployment detection, image rollout status)
+- Built-in web UI for viewing watched apps and triggering updates
 
 ## Getting Started
 
@@ -30,6 +31,8 @@ The `k8s/` directory contains the following files:
 - `rbac.yaml`: ServiceAccount, ClusterRole, ClusterRoleBinding configuration
 - `configmap.yaml`: ConfigMap for webhook settings
 - `deployment.yaml`: watch-cluster application deployment configuration
+- `service.yaml`: ClusterIP Service exposing the web UI
+- `ingress.yaml`: Ingress with basic auth, plus an optional NetworkPolicy
 - `example-deployment.yaml`: Example application for testing (version tag)
 - `example-deployment-stable.yaml`: Example using arbitrary tags (stable, custom tag)
 
@@ -52,6 +55,10 @@ kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/rbac.yaml
 kubectl apply -f k8s/configmap.yaml
 kubectl apply -f k8s/deployment.yaml
+
+# 5. Expose the web UI (optional)
+kubectl apply -f k8s/service.yaml
+kubectl apply -f k8s/ingress.yaml   # edit the host first
 ```
 
 ### Upgrading Existing Installations
@@ -207,6 +214,79 @@ Uses 5-field Unix cron: `minute hour day-of-month month day-of-week`.
 
 `*/N` is not a fixed-interval timer. It matches values stepped by `N` within that field. For example, `*/7 * * * *` runs at minutes `0, 7, 14, ..., 56` every hour.
 
+## Web UI
+
+watch-cluster serves an admin UI and JSON API on port 8080 from the same
+process as the controller. Schedule state and check history live only in the
+controller's memory, so co-locating them is what lets the UI show more than
+the annotations already say.
+
+```bash
+kubectl apply -f k8s/service.yaml
+
+# Try it without an Ingress
+kubectl port-forward -n watch-cluster svc/watch-cluster 8080:80
+open http://localhost:8080
+```
+
+The UI lists every watched Deployment with its strategy, schedule, next check
+time, and last check result; expands a row to show check history, Kubernetes
+Events, and inline cron/strategy editing; triggers a manual check; and starts
+watching a new app by picking from the cluster's unwatched Deployments.
+
+### API Reference
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/apps` | Watched deployments with schedule and check state |
+| `GET` | `/api/apps/{ns}/{name}` | Detail with in-memory check history and Kubernetes Events |
+| `POST` | `/api/apps/{ns}/{name}/check` | Trigger one check (202; runs asynchronously) |
+| `PUT` | `/api/apps/{ns}/{name}/watch` | Start watching or update `{"cron": "...", "strategy": "..."}`; omitted fields keep their current value |
+| `DELETE` | `/api/apps/{ns}/{name}/watch` | Stop watching (sets `enabled: "false"`, keeps cron/strategy) |
+| `GET` | `/api/deployments` | Deployments not yet watched, as candidates |
+| `GET` | `/healthz`, `/readyz` | Health probes (never authenticated) |
+
+Every write goes through the same `watch-cluster.io/*` annotations that
+`kubectl annotate` sets, so the UI, the API, and the CLI share one code path.
+Invalid cron expressions and unknown strategies are rejected with 400 rather
+than silently falling back to a default.
+
+### Authentication
+
+`k8s/ingress.yaml` protects the UI with nginx basic auth:
+
+```bash
+htpasswd -c auth admin
+kubectl create secret generic watch-cluster-basic-auth --from-file=auth -n watch-cluster
+```
+
+Basic auth at the Ingress does not cover in-cluster traffic — any pod can
+still reach the ClusterIP Service directly, and the write API can change
+annotations on any Deployment in the cluster. Two optional ways to close that:
+
+- Set `ADMIN_TOKEN` on the watch-cluster Deployment. When set, `/api/*`
+  requires `Authorization: Bearer <token>`; the UI prompts for the token and
+  keeps it in `localStorage`. When unset (the default), the API is open and
+  protection is expected to come from the Ingress.
+- Apply the NetworkPolicy included in `k8s/ingress.yaml`.
+
+### Configuration
+
+| Environment Variable | Description | Default |
+|---------------------|-------------|---------|
+| `HTTP_PORT` | Port for the web UI and API | 8080 |
+| `ADMIN_TOKEN` | Bearer token required for `/api/*`; unset means no app-level auth | - |
+
+### Limitations
+
+- Check history is held in memory and is lost when the pod restarts. Update
+  history that survives restarts lives in the `watch-cluster.io/last-update`
+  and `watch-cluster.io/change` annotations and in Kubernetes Events.
+- The UI reads Kubernetes Events, which requires the `list` verb added in
+  `k8s/rbac.yaml`. Re-apply it when upgrading.
+- Worker state is per-process, so run a single replica (the shipped
+  Deployment already uses `replicas: 1` with the `Recreate` strategy).
+
 ## Advanced Usage
 
 ### Check Status After Update
@@ -339,6 +419,7 @@ annotations:
 - Currently only updates the first container in each Deployment
 - Private registry authentication is supported through Kubernetes imagePullSecret
 - Rollback functionality is not included
+- Web UI check history is in-memory only and does not survive a restart
 - Checks image information through registry API without direct Docker daemon access
 
 ## Troubleshooting

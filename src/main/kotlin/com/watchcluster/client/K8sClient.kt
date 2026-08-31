@@ -1,5 +1,6 @@
 package com.watchcluster.client
 
+import com.watchcluster.client.domain.DeploymentEventInfo
 import com.watchcluster.client.domain.DeploymentInfo
 import com.watchcluster.client.domain.K8sClientConfig
 import com.watchcluster.client.domain.PodInfo
@@ -41,6 +42,21 @@ interface K8sClient : AutoCloseable {
         type: String = "Normal",
     ) {
     }
+
+    /**
+     * Returns Events whose involvedObject is the named Deployment, most
+     * recent first, capped at [limit].
+     *
+     * Implementations must propagate failures: callers distinguish "no
+     * events" from "events are unreadable" (RBAC missing the `list` verb) and
+     * surface the difference. The empty default exists only so test doubles
+     * need not implement it.
+     */
+    suspend fun listDeploymentEvents(
+        namespace: String,
+        deploymentName: String,
+        limit: Int = 50,
+    ): List<DeploymentEventInfo> = emptyList()
 
     // Pod operations
     suspend fun getPod(

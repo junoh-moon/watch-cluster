@@ -5,9 +5,11 @@ import com.watchcluster.client.K8sWatcher
 import com.watchcluster.client.domain.DeploymentInfo
 import com.watchcluster.client.domain.EventType
 import com.watchcluster.client.domain.K8sWatchEvent
-import com.watchcluster.model.UpdateStrategy
-import com.watchcluster.model.WatchClusterAnnotations
 import com.watchcluster.model.WatchedDeployment
+import com.watchcluster.model.isCheckNowRequested
+import com.watchcluster.model.isWatchEnabled
+import com.watchcluster.model.watchCronExpression
+import com.watchcluster.model.watchStrategy
 import com.watchcluster.model.WebhookConfig
 import com.watchcluster.service.DeploymentUpdater
 import com.watchcluster.service.ImageChecker
@@ -112,6 +114,25 @@ class WatchController(
         } while (workers.isNotEmpty())
     }
 
+    /**
+     * Live workers' runtime state for the admin API, keyed by
+     * `namespace/name`. Workers that have been stopped but not yet
+     * deregistered are excluded, so the result matches what the controller is
+     * actually still checking.
+     */
+    internal fun watchedStatuses(): Map<String, WorkerStatus> =
+        workers
+            .filterValues { !it.isStopRequested }
+            .mapValues { (_, worker) -> worker.status() }
+
+    internal fun statusFor(
+        namespace: String,
+        name: String,
+    ): WorkerStatus? =
+        workers["$namespace/$name"]
+            ?.takeUnless { it.isStopRequested }
+            ?.status()
+
     internal suspend fun reconcileDeployments() {
         val deployments =
             runCatching { k8sClient.listDeployments() }
@@ -141,22 +162,16 @@ class WatchController(
     private suspend fun handleDeployment(deployment: DeploymentInfo) {
         if (stopRequested.get()) return
 
-        val annotations = deployment.annotations
-        val enabled = annotations[WatchClusterAnnotations.ENABLED]?.toBoolean() ?: false
-        val checkNowRequested = annotations.containsKey(WatchClusterAnnotations.CHECK_NOW)
+        val checkNowRequested = deployment.isCheckNowRequested
 
         val namespace = deployment.namespace
         val name = deployment.name
         val key = "$namespace/$name"
 
-        if (!enabled) {
+        if (!deployment.isWatchEnabled) {
             workers[key]?.stop()
             return
         }
-
-        val cronExpression = annotations[WatchClusterAnnotations.CRON] ?: WatchClusterAnnotations.DEFAULT_CRON
-        val strategyStr = annotations[WatchClusterAnnotations.STRATEGY] ?: "version"
-        val strategy = UpdateStrategy.fromString(strategyStr)
 
         val containers = deployment.containers
         if (containers.isEmpty()) return
@@ -165,8 +180,8 @@ class WatchController(
             WatchedDeployment(
                 namespace = namespace,
                 name = name,
-                cronExpression = cronExpression,
-                updateStrategy = strategy,
+                cronExpression = deployment.watchCronExpression,
+                updateStrategy = deployment.watchStrategy,
                 currentImage = containers[0].image,
                 imagePullSecrets = deployment.imagePullSecrets,
             )

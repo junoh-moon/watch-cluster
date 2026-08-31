@@ -10,6 +10,8 @@ plugins {
 group = "com.watchcluster"
 version = "1.0.0"
 
+val ktorVersion = "2.3.7"
+
 repositories {
     mavenCentral()
 }
@@ -25,11 +27,17 @@ dependencies {
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.16.0")
     implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.16.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("io.ktor:ktor-server-core-jvm:$ktorVersion")
+    implementation("io.ktor:ktor-server-netty-jvm:$ktorVersion")
+    implementation("io.ktor:ktor-server-content-negotiation-jvm:$ktorVersion")
+    implementation("io.ktor:ktor-server-status-pages-jvm:$ktorVersion")
+    implementation("io.ktor:ktor-serialization-jackson:$ktorVersion")
 
     testImplementation(kotlin("test"))
     testImplementation("io.mockk:mockk:1.13.8")
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.1")
-    testImplementation("io.ktor:ktor-client-mock:2.3.7")
+    testImplementation("io.ktor:ktor-client-mock:$ktorVersion")
+    testImplementation("io.ktor:ktor-server-test-host-jvm:$ktorVersion")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
 }
 

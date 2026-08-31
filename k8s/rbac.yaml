@@ -14,7 +14,8 @@ rules:
   verbs: ["get", "list", "watch", "update", "patch"]
 - apiGroups: [""]
   resources: ["events"]
-  verbs: ["create"]
+  # list is required by the admin UI to show a deployment's audit trail.
+  verbs: ["create", "list"]
 - apiGroups: [""]
   resources: ["secrets"]
   verbs: ["get", "list"]

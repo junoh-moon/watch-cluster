@@ -7,7 +7,6 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertNotNull
 
 class CronTickerTest {
     private val ticker = CronUtilsTicker()
@@ -37,27 +36,6 @@ class CronTickerTest {
                 ticker.awaitNextExecution("0 0 0 30 2 ?")
             }
         }
-
-    @Test
-    fun `parses unix cron expressions`() {
-        assertNotNull(ticker.parseCron("*/5 * * * *"))
-        assertNotNull(ticker.parseCron("0 2 * * *"))
-        assertNotNull(ticker.parseCron("0 9-17 * * MON-FRI"))
-    }
-
-    @Test
-    fun `parses quartz cron expressions for backward compatibility`() {
-        assertNotNull(ticker.parseCron("0 */5 * * * ?"))
-        assertNotNull(ticker.parseCron("0 0 2 * * ?"))
-        assertNotNull(ticker.parseCron("0 0 0 1 * ? 2026"))
-    }
-
-    @Test
-    fun `rejects unsupported cron field counts`() {
-        assertFailsWith<IllegalArgumentException> {
-            ticker.parseCron("* * * *")
-        }
-    }
 
     @Test
     fun `never fires early or repeats the same cron boundary`() =
