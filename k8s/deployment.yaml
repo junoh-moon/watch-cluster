@@ -26,30 +26,43 @@ spec:
       serviceAccountName: watch-cluster
       containers:
       - name: watch-cluster
-        image: hub.sixtyfive.me/watch-cluster:v0.10.0
-        imagePullPolicy: Always
+        image: hub.sixtyfive.me/watch-cluster:v0.50.45
+        imagePullPolicy: IfNotPresent
         ports:
         - name: http
           containerPort: 8080
-        livenessProbe:
+        # The JVM plus the fabric8 client spends its startup on class loading
+        # and Jackson introspection, so a startup probe owns that window and
+        # keeps the liveness probe from restarting a pod that is merely slow.
+        startupProbe:
           httpGet:
             path: /healthz
             port: http
-          initialDelaySeconds: 20
-          periodSeconds: 30
+          periodSeconds: 2
+          failureThreshold: 60
         readinessProbe:
           httpGet:
             path: /readyz
             port: http
-          initialDelaySeconds: 5
-          periodSeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          periodSeconds: 30
+          timeoutSeconds: 3
         resources:
           requests:
             memory: "128Mi"
-            cpu: "50m"
+            cpu: "100m"
+          # Startup is CPU-bound: measured against this cluster, a 200m limit
+          # took 52s to bind the HTTP port while 1000m took 8.4s. Steady state
+          # is ~3m, so the headroom is only ever consumed while starting, and
+          # a runaway is still capped at one of the node's four cores.
           limits:
             memory: "512Mi"
-            cpu: "200m"
+            cpu: "1000m"
         env:
         - name: POD_NAME
           valueFrom:
