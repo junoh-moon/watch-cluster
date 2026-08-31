@@ -47,6 +47,7 @@
   header .spacer { flex: 1; }
   .pulse { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
   main { padding: 20px; max-width: 1400px; margin: 0 auto; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
   button {
     font: inherit; font-size: 13px; padding: 5px 11px; border-radius: 6px;
     border: 1px solid var(--border); background: var(--surface); color: var(--text);
@@ -62,12 +63,18 @@
     border: 1px solid var(--border); background: var(--surface); color: var(--text);
   }
   input[type=text] { font-family: var(--mono); }
-  table { width: 100%; border-collapse: collapse; background: var(--surface);
-          border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; background: var(--surface); }
   th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
   th { font-size: 12px; font-weight: 600; color: var(--text-dim); background: var(--surface-alt); white-space: nowrap; }
   tbody tr.app:hover { background: var(--surface-alt); }
   tbody tr.app { cursor: pointer; }
+  /* The primary action stays reachable when the table scrolls horizontally. */
+  thead th:last-child, tbody tr.app > td:last-child {
+    position: sticky; right: 0; background: var(--surface);
+    box-shadow: -6px 0 6px -6px rgba(0, 0, 0, .25);
+  }
+  thead th:last-child { background: var(--surface-alt); }
+  tbody tr.app:hover > td:last-child { background: var(--surface-alt); }
   tr:last-child td { border-bottom: none; }
   .mono { font-family: var(--mono); font-size: 12.5px; }
   .dim { color: var(--text-dim); }
@@ -123,6 +130,7 @@
 </header>
 
 <main>
+  <div class="table-wrap">
   <table>
     <thead>
       <tr>
@@ -132,6 +140,7 @@
     </thead>
     <tbody id="rows"></tbody>
   </table>
+  </div>
   <div class="empty" id="empty" hidden>감시 중인 앱이 없습니다. <b>+ 새 앱 감시</b>로 추가하십시오.</div>
 </main>
 
@@ -176,6 +185,9 @@ const STRATEGIES = ["version", "version-lock-major", "latest"];
 
 const $ = (id) => document.getElementById(id);
 const key = (a) => a.namespace + "/" + a.name;
+/** `repo:tag` for display; the digest goes in the cell's title attribute. */
+const shortImage = (image) => String(image ?? "").split("@")[0];
+
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -263,11 +275,11 @@ function render() {
     return `
       <tr class="app" data-key="${esc(k)}">
         <td class="nowrap"><span class="dim">${esc(app.namespace)}/</span><span class="name">${esc(app.name)}</span></td>
-        <td class="mono">${esc(app.image)}</td>
+        <td class="mono nowrap" title="${esc(app.image)}">${esc(shortImage(app.image))}</td>
         <td class="mono nowrap">${esc(app.strategy)}</td>
         <td class="mono nowrap">${app.cronValid ? esc(app.cron) : `<span class="badge err">${esc(app.cron)}</span>`}</td>
         <td class="nowrap dim" title="${esc(absolute(app.nextCheckAt))}">${esc(relative(app.nextCheckAt))}</td>
-        <td>${resultCell(app)}</td>
+        <td class="nowrap">${resultCell(app)}</td>
         <td>${statusBadge(app)}</td>
         <td class="nowrap"><button data-check="${esc(k)}" ${app.checkInProgress || app.checkNowPending ? "disabled" : ""}>지금 체크</button></td>
       </tr>
