@@ -167,6 +167,8 @@ Supported version formats:
 - `v1.0.0`, `v1.0.1`, `v1.1.0`
 - `1.0.0-beta`, `1.0.0-rc1`
 
+Tags such as `12.0ubu2604-ls48` compare using only their leading numeric version (`12.0`), retaining the packaging suffix when updating the image. Changes to the suffix alone do not trigger an update. `rc`, `alpha`, and `beta` prereleases are excluded, including attached forms such as `12.0rc1`.
+
 #### 2. Version Lock Major Strategy
 Locks the major version and only updates minor/patch versions:
 

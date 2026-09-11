@@ -133,6 +133,32 @@ class ImageCheckerTest {
         }
 
     @Test
+    fun `version update preserves letter suffix and ignores newer prereleases`() =
+        runBlocking {
+            val tag = "12.0ubu2604-ls48"
+            coEvery { mockRegistryClient.getTags(null, "linuxserver/jellyfin", null) } returns
+                listOf("10.11.11", tag, "13.0rc1", "13.0-beta1", "amd64-14.0ubu2604-ls50")
+            coEvery { mockRegistryClient.getImageDigest(null, "linuxserver/jellyfin", tag, null) } returns "sha256:new"
+
+            val result = imageChecker.checkForUpdate("linuxserver/jellyfin:10.11.11", UpdateStrategy.Version(), "default", null)
+
+            assertEquals("linuxserver/jellyfin:$tag@sha256:new", result.newImage)
+        }
+
+    @Test
+    fun `letter suffix tags support subsequent app updates but ignore rebuilds`() =
+        runBlocking {
+            val current = "linuxserver/jellyfin:12.0ubu2604-ls48"
+            coEvery { mockRegistryClient.getTags(null, "linuxserver/jellyfin", null) } returns listOf("12.0ubu2604-ls49")
+            assertNull(imageChecker.checkForUpdate(current, UpdateStrategy.Version(), "default", null).newImage)
+
+            val next = "12.1ubu2604-ls50"
+            coEvery { mockRegistryClient.getTags(null, "linuxserver/jellyfin", null) } returns listOf("12.0ubu2604-ls49", next)
+            coEvery { mockRegistryClient.getImageDigest(null, "linuxserver/jellyfin", next, null) } returns "sha256:next"
+            assertEquals("linuxserver/jellyfin:$next@sha256:next", imageChecker.checkForUpdate(current, UpdateStrategy.Version(), "default", null).newImage)
+        }
+
+    @Test
     fun `test checkForUpdate with newer version available`() =
         runBlocking {
             // Given

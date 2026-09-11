@@ -59,10 +59,13 @@ object ImageParser {
         tag: String,
     ): String = registry?.let { "$it/$repository:$tag" } ?: "$repository:$tag"
 
-    fun isVersionTag(tag: String): Boolean = tag.matches(Regex("^v?\\d+\\.\\d+(\\.\\d+)?(-.*)?$"))
+    private val VERSION_TAG_PATTERN = Regex("^v?(\\d+\\.\\d+(?:\\.\\d+)?)([a-zA-Z-].*)?$")
+
+    fun isVersionTag(tag: String): Boolean = VERSION_TAG_PATTERN.matches(tag)
 
     fun parseVersion(tag: String): List<Int> {
-        val versionPart = tag.removePrefix("v").split("-").first()
+        // Compare only the numeric version; keep packaging suffixes in the image tag.
+        val versionPart = VERSION_TAG_PATTERN.matchEntire(tag)?.groupValues?.get(1) ?: tag.removePrefix("v").substringBefore("-")
         return versionPart.split(".").map { it.toIntOrNull() ?: 0 }
     }
 
@@ -76,9 +79,10 @@ object ImageParser {
     fun isPrerelease(tag: String): Boolean {
         // Compare the leading word of the suffix (e.g. "rc" in "rc.2", "beta" in
         // "beta1") against the known markers, so variants like "previous" stay clear.
+        val suffix = VERSION_TAG_PATTERN.matchEntire(tag)?.groupValues?.get(2) ?: tag.substringAfter("-", "")
         val suffixHead =
-            tag
-                .substringAfter("-", "")
+            suffix
+                .removePrefix("-")
                 .lowercase()
                 .takeWhile { it !in SUFFIX_DELIMITERS && !it.isDigit() }
         return suffixHead in PRERELEASE_TOKENS

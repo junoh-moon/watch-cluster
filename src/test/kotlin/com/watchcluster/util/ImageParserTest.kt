@@ -100,6 +100,31 @@ class ImageParserTest {
     }
 
     @Test
+    fun `version comparison ignores suffixes starting with a letter`() {
+        for ((tag, version) in listOf(
+            "12.0ubu2604-ls48" to listOf(12, 0),
+            "12.1ubu2604-ls49" to listOf(12, 1),
+            "12.0.1ubu2604-ls49" to listOf(12, 0, 1),
+            "v12.0.1UBU2604-ls49" to listOf(12, 0, 1),
+        )) {
+            assertTrue(ImageParser.isVersionTag(tag), tag)
+            assertEquals(version, ImageParser.parseVersion(tag), tag)
+            assertFalse(ImageParser.isPrerelease(tag), tag)
+        }
+        assertFalse(ImageParser.isVersionTag("amd64-12.0ubu2604-ls48"))
+        assertFalse(ImageParser.isVersionTag("version-12.0ubu2604"))
+        assertFalse(ImageParser.isVersionTag("12.0.1.2"))
+    }
+
+    @Test
+    fun `attached prerelease suffixes remain prereleases`() {
+        for (tag in listOf("12.0rc1", "12.0.1alpha2", "v12.0BETA3")) {
+            assertTrue(ImageParser.isVersionTag(tag), tag)
+            assertTrue(ImageParser.isPrerelease(tag), tag)
+        }
+    }
+
+    @Test
     fun `compareVersions handles different length versions`() {
         assertTrue((listOf(2, 0, 0) > listOf(1, 0, 0)))
         assertTrue((listOf(1, 0, 0) < listOf(1, 1, 0)))
