@@ -1,36 +1,41 @@
-# Admin UI ingress with basic auth.
+# Admin UI and API ingress with HAProxy basic auth.
 #
-# Create the credential secret first (htpasswd is provided by apache2-utils):
+# Before applying, configure DNS for watch.sixtyfive.me and create the
+# credential Secret. Copy the example once, then set ACCOUNT_ID and
+# ACCOUNT_PASSWORD in the gitignored local copy (commands use the repo root):
 #
-#   htpasswd -c auth admin
-#   kubectl create secret generic watch-cluster-basic-auth \
-#     --from-file=auth -n watch-cluster
+#   cp -n k8s/create_account.example.sh k8s/create_account.sh
+#   sh k8s/create_account.sh
 #
-# Two things this does NOT do on its own:
+# HAProxy expects one username per Secret key, with a crypt-compatible password
+# hash as its value. The script preserves other accounts in the same Secret.
 #
-#  1. TLS. Basic auth sends reusable credentials on every request, so serve this
-#     over HTTPS. The force-ssl-redirect annotation below refuses plain HTTP;
-#     uncomment the tls block (or terminate TLS upstream) before exposing it.
-#  2. Protect in-cluster traffic. Any pod can still reach the Service directly.
-#     Set ADMIN_TOKEN on the Deployment, and/or apply the NetworkPolicy below.
+# cert-manager uses the existing letsencrypt ClusterIssuer for TLS.
+# HTTPS redirect is explicit because the controller's global setting is false.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: watch-cluster
   namespace: watch-cluster
   annotations:
-    nginx.ingress.kubernetes.io/auth-type: basic
-    nginx.ingress.kubernetes.io/auth-secret: watch-cluster-basic-auth
-    nginx.ingress.kubernetes.io/auth-realm: "watch-cluster admin"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: letsencrypt
+    flame.pawelmalak/icon: kubernetes
+    flame.pawelmalak/name: Watch Cluster
+    flame.pawelmalak/type: application
+    flame.pawelmalak/url: https://watch.sixtyfive.me
+    haproxy.org/auth-type: basic-auth
+    haproxy.org/auth-secret: watch-cluster/watch-cluster-basic-auth
+    haproxy.org/auth-realm: "watch-cluster admin"
+    haproxy.org/ssl-redirect: "true"
+    haproxy.org/ssl-redirect-port: "443"
 spec:
-  ingressClassName: nginx
-  # tls:
-  #   - hosts:
-  #       - watch-cluster.example.com
-  #     secretName: watch-cluster-tls
+  ingressClassName: haproxy
+  tls:
+    - hosts:
+        - watch.sixtyfive.me
+      secretName: watch-cluster-tls
   rules:
-    - host: watch-cluster.example.com
+    - host: watch.sixtyfive.me
       http:
         paths:
           - path: /
@@ -40,26 +45,3 @@ spec:
                 name: watch-cluster
                 port:
                   name: http
----
-# Optional: restrict Service access to the ingress controller, closing the
-# in-cluster path that basic auth does not cover. Adjust the namespace label
-# selector to match your ingress controller.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: watch-cluster-admin
-  namespace: watch-cluster
-spec:
-  podSelector:
-    matchLabels:
-      app: watch-cluster
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: ingress-nginx
-      ports:
-        - port: 8080
-          protocol: TCP

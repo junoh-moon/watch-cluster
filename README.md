@@ -32,7 +32,8 @@ The `k8s/` directory contains the following files:
 - `configmap.yaml`: ConfigMap for webhook settings
 - `deployment.yaml`: watch-cluster application deployment configuration
 - `service.yaml`: ClusterIP Service exposing the web UI
-- `ingress.yaml`: Ingress with basic auth, plus an optional NetworkPolicy
+- `ingress.yaml`: HAProxy Ingress with Basic Auth, TLS, and Flame integration
+- `create_account.example.sh`: Template for creating or updating an admin account
 - `example-deployment.yaml`: Example application for testing (version tag)
 - `example-deployment-stable.yaml`: Example using arbitrary tags (stable, custom tag)
 
@@ -255,22 +256,33 @@ than silently falling back to a default.
 
 ### Authentication
 
-`k8s/ingress.yaml` protects the UI with nginx basic auth:
+`k8s/ingress.yaml` exposes the UI and `/api/*` at `https://watch.sixtyfive.me`
+with HAProxy Basic Auth. TLS uses cert-manager's `letsencrypt` ClusterIssuer.
+Use HAProxy Kubernetes Ingress Controller 3.2.13 or later in the 3.2 series,
+which redirects HTTP to HTTPS before requesting Basic Auth credentials.
+
+Create the authentication Secret before applying the Ingress. The script requires
+`kubectl`, `openssl`, and `jq`, and the `watch-cluster` namespace must exist:
 
 ```bash
-htpasswd -c auth admin
-kubectl create secret generic watch-cluster-basic-auth --from-file=auth -n watch-cluster
+cp -n k8s/create_account.example.sh k8s/create_account.sh
+# Set ACCOUNT_ID and ACCOUNT_PASSWORD in k8s/create_account.sh, then run:
+sh k8s/create_account.sh
 ```
 
-Basic auth at the Ingress does not cover in-cluster traffic — any pod can
-still reach the ClusterIP Service directly, and the write API can change
-annotations on any Deployment in the cluster. Two optional ways to close that:
+The local script is gitignored; keep credentials out of the tracked example.
+It stores password hashes in `watch-cluster-basic-auth`, preserves other accounts,
+and makes no change when rerun with the same ID/password. To change a password,
+edit the local script and rerun it. Changing the ID adds another account.
 
-- Set `ADMIN_TOKEN` on the watch-cluster Deployment. When set, `/api/*`
-  requires `Authorization: Bearer <token>`; the UI prompts for the token and
-  keeps it in `localStorage`. When unset (the default), the API is open and
-  protection is expected to come from the Ingress.
-- Apply the NetworkPolicy included in `k8s/ingress.yaml`.
+Basic Auth protects requests through the Ingress. Direct in-cluster Service
+access is not protected by it; this manifest does not include a NetworkPolicy
+or authentication-failure throttling.
+
+The application also supports optional `ADMIN_TOKEN` authentication for `/api/*`.
+When enabled, the UI prompts for a Bearer token and stores it in `localStorage`.
+Leave it unset for the Ingress Basic Auth setup described above: both mechanisms
+use the `Authorization` header and cannot simply be combined in the browser.
 
 ### Configuration
 

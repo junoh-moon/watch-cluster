@@ -32,7 +32,8 @@ Kubernetes용 자동 컨테이너 이미지 업데이트 도구입니다. Docker
 - `configmap.yaml`: 웹훅 설정을 위한 ConfigMap
 - `deployment.yaml`: watch-cluster 애플리케이션 배포 설정
 - `service.yaml`: 웹 UI를 노출하는 ClusterIP Service
-- `ingress.yaml`: basic auth가 적용된 Ingress 및 선택적 NetworkPolicy
+- `ingress.yaml`: Basic Auth, TLS, Flame 연동이 적용된 HAProxy Ingress
+- `create_account.example.sh`: 관리자 계정 생성·수정용 스크립트 예시
 - `example-deployment.yaml`: 테스트용 예시 애플리케이션 (버전 태그)
 - `example-deployment-stable.yaml`: 임의 태그(stable, custom tag) 사용 예시
 
@@ -255,22 +256,34 @@ annotation을 거치므로 UI·API·CLI가 하나의 경로를 공유합니다. 
 
 ### 인증
 
-`k8s/ingress.yaml`은 nginx basic auth로 UI를 보호합니다:
+`k8s/ingress.yaml`은 `https://watch.sixtyfive.me`의 UI와 `/api/*`를
+HAProxy Basic Auth로 보호합니다. TLS는 cert-manager의 `letsencrypt`
+ClusterIssuer를 사용합니다. HTTP에서 인증을 요구하기 전에 HTTPS로 전환하도록
+해당 문제가 수정된 HAProxy Kubernetes Ingress Controller 3.2.13 이상의
+3.2 버전을 사용하십시오.
+
+Ingress 적용 전에 인증 Secret을 생성하십시오. 스크립트에는 `kubectl`,
+`openssl`, `jq`가 필요하며, `watch-cluster` 네임스페이스가 존재해야 합니다:
 
 ```bash
-htpasswd -c auth admin
-kubectl create secret generic watch-cluster-basic-auth --from-file=auth -n watch-cluster
+cp -n k8s/create_account.example.sh k8s/create_account.sh
+# k8s/create_account.sh의 ACCOUNT_ID와 ACCOUNT_PASSWORD를 입력한 후 실행하십시오.
+sh k8s/create_account.sh
 ```
 
-Ingress의 basic auth는 클러스터 내부 트래픽을 막지 못합니다. 어떤 파드든 ClusterIP
-Service로 직접 접근할 수 있고, 쓰기 API는 클러스터 내 모든 Deployment의 annotation을
-바꿀 수 있습니다. 이를 막으려면 다음 두 가지를 선택적으로 적용하십시오:
+로컬 실행 파일은 Git에서 제외됩니다. 추적되는 예시 파일에는 계정 정보를 입력하지
+마십시오. 스크립트는 `watch-cluster-basic-auth`에 비밀번호 해시를 저장하고 다른
+계정을 유지합니다. 같은 ID/PW로 재실행하면 변경하지 않습니다. 비밀번호를 변경하려면
+로컬 파일을 수정해 다시 실행하십시오. ID를 바꾸면 별도 계정이 추가됩니다.
 
-- watch-cluster Deployment에 `ADMIN_TOKEN`을 설정합니다. 설정하면 `/api/*` 호출에
-  `Authorization: Bearer <token>`이 필요하며, UI가 토큰을 입력받아
-  `localStorage`에 보관합니다. 설정하지 않으면(기본값) API는 열려 있으며 Ingress가
-  보호를 담당합니다.
-- `k8s/ingress.yaml`에 포함된 NetworkPolicy를 적용합니다.
+Basic Auth는 Ingress를 경유하는 요청을 보호합니다. 클러스터 내부에서 Service로
+직접 접근하는 경로에는 적용되지 않습니다. 이 매니페스트에는 NetworkPolicy나
+인증 실패 횟수에 따른 차단 설정이 포함되어 있지 않습니다.
+
+애플리케이션은 `/api/*`에 선택적으로 `ADMIN_TOKEN` 인증을 적용할 수 있습니다.
+설정하면 UI가 Bearer 토큰을 입력받아 `localStorage`에 보관합니다. 위의 Ingress
+Basic Auth 구성에서는 이 값을 설정하지 마십시오. 두 인증 방식 모두
+`Authorization` 헤더를 사용하므로 브라우저에서 단순히 함께 적용할 수 없습니다.
 
 ### 설정
 

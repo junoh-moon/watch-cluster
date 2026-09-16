@@ -71,6 +71,7 @@ logs/
 .env
 .env.local
 .env.*.local
+/k8s/create_account.sh
 
 # Test coverage
 coverage/
