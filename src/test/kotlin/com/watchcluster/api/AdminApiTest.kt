@@ -13,12 +13,12 @@ import com.watchcluster.controller.WatchController
 import com.watchcluster.model.WatchClusterAnnotations
 import com.watchcluster.model.WebhookConfig
 import io.ktor.client.request.delete
+import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
-import io.ktor.client.request.get
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
@@ -152,6 +152,26 @@ class AdminApiTest {
             assertContains(body, "watched")
             assertTrue("ignored" !in body)
             assertTrue("disabled" !in body)
+        }
+
+    @Test
+    fun `exposes configured minimum release age without changing annotations`() =
+        testApplication {
+            k8sClient.deployments =
+                mutableListOf(
+                    deployment(
+                        annotations =
+                            mapOf(
+                                WatchClusterAnnotations.ENABLED to "true",
+                                "watch-cluster.io/minimum-release-age" to "3d",
+                            ),
+                    ),
+                )
+            installModule()
+            val body = client.get("/api/apps").bodyAsText()
+            val apps = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().readTree(body)
+            assertEquals("3d", apps[0].path("minimumReleaseAge").asText())
+            assertTrue(k8sClient.patches.isEmpty())
         }
 
     @Test

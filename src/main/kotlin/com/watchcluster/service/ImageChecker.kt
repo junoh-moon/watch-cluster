@@ -10,6 +10,7 @@ import com.watchcluster.util.ImageParser
 import com.watchcluster.util.compareTo
 import kotlinx.coroutines.CancellationException
 import mu.KotlinLogging
+import java.time.Duration
 import java.util.Base64
 
 private val logger = KotlinLogging.logger {}
@@ -35,6 +36,16 @@ class ImageChecker(
 ) {
     private val registryClient = DockerRegistryClient()
     private val objectMapper = ObjectMapper()
+
+    suspend fun checkReleaseAge(
+        candidate: ImageUpdateResult,
+        minimumAge: Duration,
+        namespace: String,
+        imagePullSecrets: List<String>?,
+    ): ReleaseAgeDecision {
+        val auth = imagePullSecrets?.let { extractDockerAuth(namespace, it, requireNotNull(candidate.newImage)) }
+        return ReleaseAgePolicy(registryClient).evaluate(candidate, minimumAge, auth)
+    }
 
     private data class CurrentImageDigest(
         val digest: String?,

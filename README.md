@@ -152,6 +152,39 @@ You can inspect the audit trail with:
 kubectl get events -n my-namespace --sort-by=.metadata.creationTimestamp
 ```
 
+### Minimum Release Age
+
+Delay updates until the selected Docker Hub image has been pushed for at least the configured duration:
+
+```yaml
+annotations:
+  watch-cluster.io/minimum-release-age: "3d"
+```
+
+Use a positive integer followed by `h`, `d`, or `w` (for example `12h`, `3d`, `3w`); a day is 24 hours and a week is 7 days.
+An absent annotation or `0` disables the delay. Invalid values, including fractions, compound durations, whitespace, and overflow,
+are ignored with a warning. Configure this annotation on the Deployment; the web UI displays it and the latest check result.
+
+Only the latest candidate allowed by the existing update strategy is evaluated. A newer candidate replaces a waiting one;
+older eligible versions are not used as a fallback. The registry's last push time is used, never the first discovery time,
+image build time, or project release time. Tag/index candidates use `tag_last_pushed`; platform image candidates use the
+matching digest's `images[].last_pushed`. These are last-push timestamps, not guaranteed first-publication timestamps.
+
+Missing timestamps, digest mismatches, unsupported registries, and lookup failures hold the update and are retried at the next check.
+The UI shows `유예 대기` (waiting) or `공개 시각 확인 불가` (time unavailable); check history includes the candidate and, when known,
+its eligible time. Scheduled updates run on the next cron check after eligibility. `check-now` respects the same gate.
+No waiting timer is persisted: checks after a restart fetch the registry timestamp again.
+
+When the gate allows an update, the verified digest is pinned alongside the tag, including for the `latest` strategy,
+so a tag moving between the check and the image pull cannot bypass the delay. Unset/zero settings preserve existing behavior.
+With the `latest` strategy, this currently pins the observed platform image. Use this gate only when the Deployment's eligible
+nodes share that architecture; preserving multi-architecture index selection is deferred.
+
+Set `MINIMUM_RELEASE_AGE_EXCLUDED_REGISTRIES` to comma-separated exact registry hosts to always bypass the gate for those hosts.
+The supplied ConfigMap excludes `hub.sixtyfive.me`; the application has no built-in excluded hosts. Apply both the ConfigMap
+and Deployment configuration when upgrading to enable this environment setting. Other non-Docker-Hub registries with a positive
+minimum age remain on hold until the setting is disabled or the registry is explicitly excluded.
+
 ### Update Strategies
 
 #### 1. Version Strategy

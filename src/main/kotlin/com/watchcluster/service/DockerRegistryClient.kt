@@ -18,6 +18,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import java.io.IOException
+import java.time.Instant
+import java.time.format.DateTimeParseException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -86,6 +88,49 @@ class DockerRegistryClient {
 
     private val mapper = jacksonObjectMapper()
     private val ghcrStrategy = GHCRStrategy()
+
+    /** The tag response must still contain the selected digest; never borrow another digest's date. */
+    suspend fun getImagePushedAt(
+        registry: String?,
+        repository: String,
+        tag: String,
+        expectedDigest: String,
+        dockerAuth: DockerAuth? = null,
+    ): Instant? =
+        withContext(Dispatchers.IO) {
+            if (registry != null && registry != "docker.io") return@withContext null
+            val qualifiedRepository = if (repository.contains('/')) repository else "library/$repository"
+            val url =
+                "https://hub.docker.com/v2/namespaces".toHttpUrl().newBuilder()
+                    .addPathSegment(qualifiedRepository.substringBefore('/'))
+                    .addPathSegment("repositories")
+                    .addPathSegment(qualifiedRepository.substringAfter('/'))
+                    .addPathSegment("tags")
+                    .addPathSegment(tag)
+                    .build()
+            val request =
+                Request.Builder().url(url).apply {
+                    dockerAuth?.let { header("Authorization", Credentials.basic(it.username, it.password)) }
+                }.build()
+            client.newCall(request).await().use { response ->
+                check(response.isSuccessful) { "Failed to fetch Docker Hub push time: ${response.code}" }
+                val body = response.body?.string() ?: return@use null
+                val tagInfo = mapper.readTree(body)
+                val timestamp =
+                    if (tagInfo.path("digest").asText() == expectedDigest) {
+                        tagInfo.get("tag_last_pushed")
+                    } else {
+                        tagInfo.path("images").firstOrNull { it.path("digest").asText() == expectedDigest }
+                            ?.get("last_pushed")
+                    }
+                if (timestamp == null || !timestamp.isTextual) return@use null
+                try {
+                    Instant.parse(timestamp.asText())
+                } catch (_: DateTimeParseException) {
+                    null
+                }
+            }
+        }
 
     suspend fun getTags(
         registry: String?,

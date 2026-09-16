@@ -5,12 +5,13 @@ import com.watchcluster.client.K8sWatcher
 import com.watchcluster.client.domain.DeploymentInfo
 import com.watchcluster.client.domain.EventType
 import com.watchcluster.client.domain.K8sWatchEvent
+import com.watchcluster.model.WatchClusterAnnotations
 import com.watchcluster.model.WatchedDeployment
+import com.watchcluster.model.WebhookConfig
 import com.watchcluster.model.isCheckNowRequested
 import com.watchcluster.model.isWatchEnabled
 import com.watchcluster.model.watchCronExpression
 import com.watchcluster.model.watchStrategy
-import com.watchcluster.model.WebhookConfig
 import com.watchcluster.service.DeploymentUpdater
 import com.watchcluster.service.ImageChecker
 import com.watchcluster.service.WebhookService
@@ -183,6 +184,7 @@ class WatchController(
                 cronExpression = deployment.watchCronExpression,
                 updateStrategy = deployment.watchStrategy,
                 currentImage = containers[0].image,
+                minimumReleaseAge = deployment.annotations[WatchClusterAnnotations.MINIMUM_RELEASE_AGE],
                 imagePullSecrets = deployment.imagePullSecrets,
             )
 

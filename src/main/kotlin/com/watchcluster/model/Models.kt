@@ -10,6 +10,7 @@ data class WatchedDeployment(
     val currentImage: String,
     val imagePullSecrets: List<String>? = null,
     val lastChecked: Instant? = null,
+    val minimumReleaseAge: String? = null,
 )
 
 sealed class UpdateStrategy {
@@ -136,6 +137,7 @@ object WatchClusterAnnotations {
     const val STRATEGY = "watch-cluster.io/strategy"
     const val DEFAULT_STRATEGY = "version"
     const val CHECK_NOW = "watch-cluster.io/check-now"
+    const val MINIMUM_RELEASE_AGE = "watch-cluster.io/minimum-release-age"
     const val VERSION_PATTERN = "watch-cluster.io/version-pattern"
     const val LOCK_MAJOR_VERSION = "watch-cluster.io/lock-major-version"
     const val LAST_UPDATE = "watch-cluster.io/last-update"

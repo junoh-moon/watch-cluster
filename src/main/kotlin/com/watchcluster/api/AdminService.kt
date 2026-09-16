@@ -224,6 +224,7 @@ class AdminService(
             name = deployment.name,
             image = container.image,
             strategy = deployment.watchStrategy.displayName,
+            minimumReleaseAge = annotations[WatchClusterAnnotations.MINIMUM_RELEASE_AGE],
             cron = cron,
             cronValid = CronExpressions.isValid(cron),
             // Taken from the running worker's spec, not the annotation: between

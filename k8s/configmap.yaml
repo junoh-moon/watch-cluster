@@ -4,6 +4,8 @@ metadata:
   name: watch-cluster-config
   namespace: watch-cluster
 data:
+  # Exact registry hosts that always bypass minimum-release-age.
+  MINIMUM_RELEASE_AGE_EXCLUDED_REGISTRIES: "hub.sixtyfive.me"
   # Webhook URL - Set this to your webhook endpoint
   WEBHOOK_URL: "https://ntfy.sixtyfive.me/watchtower"
   

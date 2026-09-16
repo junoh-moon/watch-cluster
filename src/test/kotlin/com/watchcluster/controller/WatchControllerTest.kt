@@ -1160,6 +1160,41 @@ class WatchControllerTest {
             assertTrue(currentImageCaptures[1].contains("v2.2.3"), "Second check should see v2.2.3 after cache update")
         }
 
+    @Test
+    fun `minimum release age holds an update when its digest cannot be verified`() =
+        runTest {
+            val checker = io.mockk.spyk(ImageChecker(mockK8sClient))
+            val updater = mockk<DeploymentUpdater>()
+            val ticker = ManualCronTicker()
+            coEvery { checker.checkForUpdateOutcome(any(), any(), any(), any(), any()) } returns
+                ImageCheckOutcome.UpdateAvailable(ImageUpdateResult("nginx:1.0.0", "nginx:2.0.0"))
+            coEvery { updater.updateDeployment(any(), any(), any(), any(), any(), any()) } returns
+                DeploymentUpdateOutcome.PatchAppliedAndCompleted("nginx:2.0.0")
+            val controller = createController(ticker, checker, updater)
+            val watcher = startAndCaptureWatcher(controller)
+            watcher.eventReceived(
+                K8sWatchEvent(
+                    EventType.ADDED,
+                    createMockDeployment(
+                        "default",
+                        "age-test",
+                        "nginx:1.0.0",
+                        mapOf(
+                            WatchClusterAnnotations.ENABLED to "true",
+                            "watch-cluster.io/minimum-release-age" to "3d",
+                        ),
+                    ),
+                ),
+            )
+            runCurrent()
+            ticker.fire()
+            runCurrent()
+
+            val status = controller.workers.getValue("default/age-test").status()
+            assertEquals("RELEASE_TIME_UNKNOWN", status.recentChecks.first().status.name)
+            coVerify(exactly = 0) { updater.updateDeployment(any(), any(), any(), any(), any(), any()) }
+        }
+
     private fun createMockDeployment(
         namespace: String,
         name: String,

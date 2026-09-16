@@ -240,10 +240,12 @@ function absolute(iso) {
 const STATUS_CLASS = {
   UPDATED: "ok", NO_UPDATE: "idle", FAILED: "err",
   ROLLOUT_INCOMPLETE: "warn", SKIPPED: "warn",
+  RELEASE_AGE_WAITING: "warn", RELEASE_TIME_UNKNOWN: "warn",
 };
 const STATUS_LABEL = {
   UPDATED: "업데이트됨", NO_UPDATE: "최신", FAILED: "실패",
   ROLLOUT_INCOMPLETE: "롤아웃 미완료", SKIPPED: "건너뜀",
+  RELEASE_AGE_WAITING: "유예 대기", RELEASE_TIME_UNKNOWN: "공개 시각 확인 불가",
 };
 
 function statusBadge(app) {
@@ -323,6 +325,7 @@ function detailRow(app, k) {
           `<option value="${s}"${s === app.strategy ? " selected" : ""}>${s}</option>`).join("")}
       </select>
       <button class="primary" data-save="${ek}">저장</button>
+      <span class="dim">설정된 업데이트 유예: ${esc(app.minimumReleaseAge ?? "0")}</span>
       <span class="spacer" style="flex:1"></span>
       <span class="dim">replicas ${app.rollout.ready ?? 0}/${app.rollout.replicas} ready</span>
       <button class="danger" data-unwatch="${ek}">감시 해제</button>

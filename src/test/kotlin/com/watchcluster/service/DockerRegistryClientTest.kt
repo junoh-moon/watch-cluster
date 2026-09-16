@@ -420,4 +420,76 @@ class DockerRegistryClientTest {
             assertTrue(tags.isEmpty())
             coVerify { mockGHCRStrategy.getTags(repository, null) }
         }
+
+    @Test
+    fun `push time lookup matches selected digest instead of borrowing another images date`() =
+        runBlocking {
+            val body =
+                """
+                {"digest":"sha256:index", "tag_last_pushed":"2026-09-16T07:52:32Z",
+                 "last_updated":"2020-01-01T00:00:00Z", "images":[
+                   {"digest":"sha256:arm", "last_pushed":"2020-01-01T00:00:00Z"},
+                   {"digest":"sha256:amd", "last_pushed":"2026-09-16T01:50:42Z"}
+                 ]}
+                """.trimIndent()
+            every { mockClient.newCall(any()) } returns mockCall
+            coEvery { mockCall.await() } answers {
+                Response.Builder().request(Request.Builder().url("https://hub.docker.com").build())
+                    .protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                    .body(body.toResponseBody("application/json".toMediaType())).build()
+            }
+            assertEquals(
+                java.time.Instant.parse("2026-09-16T07:52:32Z"),
+                registryClient.getImagePushedAt(null, "nginx", "alpine", "sha256:index"),
+            )
+            assertEquals(
+                java.time.Instant.parse("2026-09-16T01:50:42Z"),
+                registryClient.getImagePushedAt("docker.io", "library/nginx", "alpine", "sha256:amd"),
+            )
+            kotlin.test.assertNull(registryClient.getImagePushedAt(null, "nginx", "alpine", "sha256:old"))
+        }
+
+    @Test
+    fun `push time lookup rejects null malformed or absent time without using created or last updated`() =
+        runBlocking {
+            every { mockClient.newCall(any()) } returns mockCall
+            for (timestamp in listOf("null", "\"not-a-date\"", "\"\"")) {
+                val body =
+                    """
+                    {"digest":"sha256:index", "tag_last_pushed":$timestamp,
+                     "last_updated":"2020-01-01T00:00:00Z", "created":"2020-01-01T00:00:00Z",
+                     "images":[{"digest":"sha256:amd"}]}
+                    """.trimIndent()
+                coEvery { mockCall.await() } answers {
+                    Response.Builder().request(Request.Builder().url("https://hub.docker.com").build())
+                        .protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                        .body(body.toResponseBody("application/json".toMediaType())).build()
+                }
+                kotlin.test.assertNull(registryClient.getImagePushedAt(null, "nginx", "latest", "sha256:index"))
+                kotlin.test.assertNull(registryClient.getImagePushedAt(null, "nginx", "latest", "sha256:amd"))
+            }
+        }
+
+    @Test
+    fun `push time lookup propagates API failure and passes authentication`() =
+        runBlocking {
+            val request = io.mockk.slot<Request>()
+            every { mockClient.newCall(capture(request)) } returns mockCall
+            coEvery { mockCall.await() } returns
+                Response.Builder()
+                    .request(Request.Builder().url("https://hub.docker.com").build())
+                    .protocol(Protocol.HTTP_1_1).code(429).message("Too Many Requests")
+                    .body("{}".toResponseBody("application/json".toMediaType())).build()
+            assertFailsWith<IllegalStateException> {
+                registryClient.getImagePushedAt(
+                    null,
+                    "nginx",
+                    "latest",
+                    "sha256:index",
+                    com.watchcluster.model.DockerAuth("user", "password"),
+                )
+            }
+            assertEquals("https://hub.docker.com/v2/namespaces/library/repositories/nginx/tags/latest", request.captured.url.toString())
+            assertEquals(okhttp3.Credentials.basic("user", "password"), request.captured.header("Authorization"))
+        }
 }

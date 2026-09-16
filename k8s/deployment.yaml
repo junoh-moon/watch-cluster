@@ -64,6 +64,12 @@ spec:
             memory: "512Mi"
             cpu: "1000m"
         env:
+        - name: MINIMUM_RELEASE_AGE_EXCLUDED_REGISTRIES
+          valueFrom:
+            configMapKeyRef:
+              name: watch-cluster-config
+              key: MINIMUM_RELEASE_AGE_EXCLUDED_REGISTRIES
+              optional: true
         - name: POD_NAME
           valueFrom:
             fieldRef:

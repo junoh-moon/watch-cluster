@@ -43,6 +43,8 @@ data class AppDto(
     /** False when the annotation says enabled but no worker is running yet. */
     val watched: Boolean,
     val rollout: RolloutDto,
+    /** Raw annotation; invalid values are ignored with a warning by the worker. */
+    val minimumReleaseAge: String? = null,
 )
 
 data class CandidateDto(

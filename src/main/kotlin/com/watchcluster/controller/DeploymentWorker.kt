@@ -3,6 +3,7 @@ package com.watchcluster.controller
 import com.watchcluster.client.K8sClient
 import com.watchcluster.client.patchAnnotations
 import com.watchcluster.model.DeploymentEventData
+import com.watchcluster.model.MinimumReleaseAge
 import com.watchcluster.model.WatchClusterAnnotations
 import com.watchcluster.model.WatchedDeployment
 import com.watchcluster.model.WebhookEvent
@@ -11,8 +12,10 @@ import com.watchcluster.service.DeploymentUpdateOutcome
 import com.watchcluster.service.DeploymentUpdater
 import com.watchcluster.service.ImageCheckOutcome
 import com.watchcluster.service.ImageChecker
+import com.watchcluster.service.ReleaseAgeDecision
 import com.watchcluster.service.WebhookService
 import com.watchcluster.util.CronTicker
+import com.watchcluster.util.ImageParser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -32,6 +35,8 @@ internal enum class DeploymentCheckStatus {
     FAILED,
     ROLLOUT_INCOMPLETE,
     SKIPPED,
+    RELEASE_AGE_WAITING,
+    RELEASE_TIME_UNKNOWN,
 }
 
 internal data class DeploymentCheckResult(
@@ -321,6 +326,11 @@ internal class DeploymentWorker(
 
     private suspend fun runCheck(deployment: WatchedDeployment): DeploymentCheckResult =
         runCatching {
+            if (MinimumReleaseAge.parse(deployment.minimumReleaseAge) == null) {
+                logger.warn {
+                    "Ignoring invalid ${WatchClusterAnnotations.MINIMUM_RELEASE_AGE} for $key: ${deployment.minimumReleaseAge}"
+                }
+            }
             logger.info { "Current image: ${deployment.currentImage}" }
             logger.info { "Checking for updates: ${deployment.namespace}/${deployment.name}" }
 
@@ -334,7 +344,7 @@ internal class DeploymentWorker(
                         deployment.name,
                     )
             ) {
-                is ImageCheckOutcome.UpdateAvailable -> updateDeployment(deployment, outcome)
+                is ImageCheckOutcome.UpdateAvailable -> checkReleaseAgeAndUpdate(deployment, outcome)
                 is ImageCheckOutcome.UpToDate -> noUpdateResult(deployment, outcome)
                 is ImageCheckOutcome.Failed ->
                     DeploymentCheckResult(
@@ -349,6 +359,36 @@ internal class DeploymentWorker(
             logger.error(e) { "Error checking deployment ${deployment.namespace}/${deployment.name}" }
             DeploymentCheckResult(DeploymentCheckStatus.FAILED, message)
         }
+
+    private suspend fun checkReleaseAgeAndUpdate(
+        deployment: WatchedDeployment,
+        outcome: ImageCheckOutcome.UpdateAvailable,
+    ): DeploymentCheckResult {
+        val minimumAge = MinimumReleaseAge.parse(deployment.minimumReleaseAge)
+        if (minimumAge == null || minimumAge.isZero) return updateDeployment(deployment, outcome)
+
+        val candidateImage =
+            requireNotNull(outcome.result.newImage).let { image ->
+                outcome.result.newDigest?.let { ImageParser.addDigest(image, it) } ?: image
+            }
+        val decision = imageChecker.checkReleaseAge(outcome.result, minimumAge, deployment.namespace, deployment.imagePullSecrets)
+        return when (decision) {
+            is ReleaseAgeDecision.Allowed ->
+                updateDeployment(deployment, outcome.copy(result = outcome.result.copy(newImage = decision.image)))
+            is ReleaseAgeDecision.Waiting -> {
+                val message =
+                    "Waiting for $candidateImage: pushed at ${decision.pushedAt}, eligible at ${decision.eligibleAt}; " +
+                        "recheck on the next scheduled or manual check"
+                logger.info { "$key: $message" }
+                DeploymentCheckResult(DeploymentCheckStatus.RELEASE_AGE_WAITING, message)
+            }
+            is ReleaseAgeDecision.Unavailable -> {
+                val message = "Release time unavailable for $candidateImage: ${decision.reason}"
+                logger.warn { "$key: $message" }
+                DeploymentCheckResult(DeploymentCheckStatus.RELEASE_TIME_UNKNOWN, message)
+            }
+        }
+    }
 
     private suspend fun updateDeployment(
         deployment: WatchedDeployment,
@@ -463,6 +503,8 @@ internal class DeploymentWorker(
                 DeploymentCheckStatus.FAILED -> "ManualCheckFailed" to "Warning"
                 DeploymentCheckStatus.ROLLOUT_INCOMPLETE -> "ManualCheckRolloutIncomplete" to "Warning"
                 DeploymentCheckStatus.SKIPPED -> "ManualCheckSkipped" to "Warning"
+                DeploymentCheckStatus.RELEASE_AGE_WAITING -> "ManualCheckReleaseAgeWaiting" to "Normal"
+                DeploymentCheckStatus.RELEASE_TIME_UNKNOWN -> "ManualCheckReleaseTimeUnknown" to "Warning"
             }
 
         recordDeploymentEvent(
